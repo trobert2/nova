@@ -172,6 +172,7 @@ libvirt_opts = [
                   'rbd=nova.virt.libvirt.volume.LibvirtNetVolumeDriver',
                   'sheepdog=nova.virt.libvirt.volume.LibvirtNetVolumeDriver',
                   'nfs=nova.virt.libvirt.volume.LibvirtNFSVolumeDriver',
+                  'smbfs=nova.virt.libvirt.volume.LibvirtSMBFSVolumeDriver',
                   'aoe=nova.virt.libvirt.volume.LibvirtAOEVolumeDriver',
                   'glusterfs='
                       'nova.virt.libvirt.volume.LibvirtGlusterfsVolumeDriver',
@@ -1124,6 +1125,7 @@ class LibvirtDriver(driver.ComputeDriver):
 
             virt_dom.attachDeviceFlags(conf.to_xml(), flags)
         except Exception as ex:
+            LOG.exception(ex)
             if isinstance(ex, libvirt.libvirtError):
                 errcode = ex.get_error_code()
                 if errcode == libvirt.VIR_ERR_OPERATION_FAILED:

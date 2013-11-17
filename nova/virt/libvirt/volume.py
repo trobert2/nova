@@ -59,13 +59,20 @@ volume_opts = [
     cfg.StrOpt('nfs_mount_options',
                help='Mount options passed to the nfs client. See section '
                     'of the nfs man page for details'),
+    cfg.StrOpt('smbfs_mount_point_base',
+               default=paths.state_path_def('mnt'),
+               help='Dir where smbfs volume is mounted on the compute node'),
+    cfg.StrOpt('smbfs_mount_options',
+               default="user=guest,password=,uid=107,gid=114",
+               help='Mount options passed to the smbfs client. See section '
+                    'of the nfs man page for details'),
     cfg.IntOpt('num_aoe_discover_tries',
                default=3,
                help='number of times to rediscover AoE target to find volume'),
     cfg.StrOpt('glusterfs_mount_point_base',
-                default=paths.state_path_def('mnt'),
-                help='Dir where the glusterfs volume is mounted on the '
-                      'compute node'),
+               default=paths.state_path_def('mnt'),
+               help='Dir where the glusterfs volume is mounted on the '
+                    'compute node'),
     cfg.BoolOpt('libvirt_iscsi_use_multipath',
                 default=False,
                 help='use multipath connection of the iSCSI volume'),
@@ -78,10 +85,10 @@ volume_opts = [
                default='$state_path/scality',
                help='Base dir where Scality SOFS shall be mounted'),
     cfg.ListOpt('qemu_allowed_storage_drivers',
-               default=[],
-               help='Protocols listed here will be accessed directly '
-                    'from QEMU. Currently supported protocols: [gluster]')
-    ]
+                default=[],
+                help='Protocols listed here will be accessed directly '
+                     'from QEMU. Currently supported protocols: [gluster]')
+]
 
 CONF = cfg.CONF
 CONF.register_opts(volume_opts)
@@ -142,7 +149,7 @@ class LibvirtBaseVolumeDriver(object):
                        % access_mode)
                 LOG.error(msg)
                 raise exception.InvalidVolumeAccessMode(
-                                                    access_mode=access_mode)
+                    access_mode=access_mode)
 
         return conf
 
@@ -631,6 +638,65 @@ class LibvirtNFSVolumeDriver(LibvirtBaseVolumeDriver):
         return hashlib.md5(base_str).hexdigest()
 
 
+class LibvirtSMBFSVolumeDriver(LibvirtBaseVolumeDriver):
+    """Class implements libvirt part of volume driver for SMBFS."""
+
+    def __init__(self, connection):
+        """Create back-end to smbfs."""
+        super(LibvirtSMBFSVolumeDriver,
+              self).__init__(connection, is_block_dev=False)
+
+    def connect_volume(self, connection_info, disk_info):
+        """Connect the volume. Returns xml for libvirt."""
+        conf = super(LibvirtSMBFSVolumeDriver,
+                     self).connect_volume(connection_info,
+                                          disk_info)
+        options = connection_info['data'].get('options')
+        path = self._ensure_mounted(connection_info['data']['export'], options)
+        path = os.path.join(path, connection_info['data']['name'])
+        conf.source_type = 'file'
+        conf.source_path = path
+        conf.driver_cache = None
+        conf.driver_format = connection_info['data'].get('format', 'raw')
+        return conf
+
+    def _ensure_mounted(self, smbfs_export, options=None):
+        """
+        @type smbfs_export: string
+        @type options: string
+        """
+        mount_path = os.path.join(CONF.smbfs_mount_point_base,
+                                  self.get_hash_str(smbfs_export))
+        self._mount_smbfs(mount_path, smbfs_export, options, ensure=True)
+        return mount_path
+
+    def _mount_smbfs(self,
+                     mount_path, smbfs_share, options=None, ensure=False):
+        """Mount smbfs export to mount path."""
+        utils.execute('mkdir', '-p', mount_path)
+
+        # Construct the SMBFS mount command.
+        smbfs_cmd = ['mount', '-t', 'smbfs']
+        if CONF.smbfs_mount_options is not None:
+            smbfs_cmd.extend(['-o', CONF.smbfs_mount_options])
+        if options is not None:
+            smbfs_cmd.extend(options.split(' '))
+        smbfs_cmd.extend([smbfs_share, mount_path])
+
+        try:
+            utils.execute(*smbfs_cmd, run_as_root=True)
+        except processutils.ProcessExecutionError as exc:
+            if ensure and 'Device or resource busy' in exc.message:
+                LOG.warn(_("%s is already mounted"), smbfs_share)
+            else:
+                raise
+
+    @staticmethod
+    def get_hash_str(base_str):
+        """returns string that represents hash of base_str (in hex format)."""
+        return hashlib.md5(base_str).hexdigest()
+
+
 class LibvirtAOEVolumeDriver(LibvirtBaseVolumeDriver):
     """Driver to attach AoE volumes to libvirt."""
     def __init__(self, connection):
@@ -670,7 +736,7 @@ class LibvirtAOEVolumeDriver(LibvirtBaseVolumeDriver):
 
             if self.tries >= CONF.num_aoe_discover_tries:
                 raise exception.NovaException(_("AoE device not found at %s") %
-                                                (aoedevpath))
+                                              (aoedevpath))
             LOG.warn(_("AoE volume not yet found at: %(aoedevpath)s. "
                        "Try number: %(tries)s"),
                      {'aoedevpath': aoedevpath,
