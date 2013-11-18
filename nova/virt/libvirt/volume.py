@@ -676,7 +676,7 @@ class LibvirtSMBFSVolumeDriver(LibvirtBaseVolumeDriver):
         utils.execute('mkdir', '-p', mount_path)
 
         # Construct the SMBFS mount command.
-        smbfs_cmd = ['mount', '-t', 'smbfs']
+        smbfs_cmd = ['mount', '-t', 'cifs']
         if CONF.smbfs_mount_options is not None:
             smbfs_cmd.extend(['-o', CONF.smbfs_mount_options])
         if options is not None:
@@ -686,7 +686,7 @@ class LibvirtSMBFSVolumeDriver(LibvirtBaseVolumeDriver):
         try:
             utils.execute(*smbfs_cmd, run_as_root=True)
         except processutils.ProcessExecutionError as exc:
-            if ensure and 'Device or resource busy' in exc.message:
+            if ensure and 'already mounted' in exc.message:
                 LOG.warn(_("%s is already mounted"), smbfs_share)
             else:
                 raise
