@@ -253,10 +253,13 @@ class VMUtils(object):
         volumes = self._conn.query("SELECT * FROM "
                                    "Msvm_ResourceAllocationSettingData "
                                    "WHERE ResourceSubType = "
-                                   "'%(res_sub_type)s' AND "
-                                   "Parent = '%(parent)s'" %
+                                   "'%(res_sub_type)s' OR "
+                                   "ResourceSubType='%(res_sub_type_virt)s'"
+                                   " AND Parent = '%(parent)s'" %
                                    {'res_sub_type':
                                     self._PHYS_DISK_RES_SUB_TYPE,
+                                    'res_sub_type_virt':
+                                    self._DISK_RES_SUB_TYPE,
                                     'parent':
                                     scsi_controller_path.replace("'", "''")})
         return len(volumes)
@@ -281,7 +284,10 @@ class VMUtils(object):
 
         vm = self._lookup_vm_check(vm_name)
 
-        ctrller_path = self._get_vm_ide_controller(vm, ctrller_addr)
+        if type(ctrller_addr) is int:
+            ctrller_path = self._get_vm_ide_controller(vm, ctrller_addr)
+        else:
+            ctrller_path = ctrller_addr
 
         if drive_type == constants.IDE_DISK:
             res_sub_type = self._DISK_RES_SUB_TYPE
@@ -523,9 +529,31 @@ class VMUtils(object):
 
     def detach_vm_disk(self, vm_name, disk_path):
         vm = self._lookup_vm_check(vm_name)
+
         physical_disk = self._get_mounted_disk_resource_from_path(disk_path)
         if physical_disk:
             self._remove_virt_resource(physical_disk, vm.path_())
+
+    def detach_vhd_disk(self, vm_name, disk_path):
+        vm = self._lookup_vm_check(vm_name)
+        vhd = self._get_mounted_vhd_resource_from_path(disk_path)
+        ctrl = self._conn.query("SELECT * FROM "
+                                "Msvm_ResourceAllocationSettingData"
+                                " WHERE __PATH = '%s'" %
+                                vhd.Parent)[0]
+        if vhd:
+            self._remove_virt_resource(vhd, vm.path_())
+            self._remove_virt_resource(ctrl, vm.path_())
+
+    def _get_mounted_vhd_resource_from_path(self, disk_path):
+        physical_disks = self._conn.query("SELECT * FROM "
+                                          "Msvm_StorageAllocationSettingData"
+                                          " WHERE ResourceSubType = '%s'" %
+                                          self._IDE_DISK_RES_SUB_TYPE)
+        for physical_disk in physical_disks:
+            if physical_disk.HostResource:
+                if physical_disk.HostResource[0].lower() == disk_path.lower():
+                    return physical_disk
 
     def _get_mounted_disk_resource_from_path(self, disk_path):
         physical_disks = self._conn.query("SELECT * FROM "

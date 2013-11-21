@@ -96,8 +96,10 @@ class VMUtilsV2(vmutils.VMUtils):
         """Create an IDE drive and attach it to the vm."""
 
         vm = self._lookup_vm_check(vm_name)
-
-        ctrller_path = self._get_vm_ide_controller(vm, ctrller_addr)
+        if type(ctrller_addr) is int:
+            ctrller_path = self._get_vm_ide_controller(vm, ctrller_addr)
+        else:
+            ctrller_path = ctrller_addr
 
         if drive_type == constants.IDE_DISK:
             res_sub_type = self._DISK_RES_SUB_TYPE
