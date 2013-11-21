@@ -20,6 +20,8 @@
 Management class for Storage-related functions (attach, detach, etc).
 """
 import time
+import hashlib
+import os
 
 from oslo.config import cfg
 
@@ -27,6 +29,8 @@ from nova import exception
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova.virt import driver
+from nova import paths
+from nova import utils
 from nova.virt.hyperv import utilsfactory
 from nova.virt.hyperv import vmutils
 
@@ -39,6 +43,9 @@ hyper_volumeops_opts = [
     cfg.IntOpt('volume_attach_retry_interval',
                default=5,
                help='Interval between volume attachment attempts, in seconds'),
+    cfg.StrOpt('smbfs_mount_point_base',
+               default='$instances_path\_mnt',
+               help='Dir where smbfs links are created to SMB shares'),
 ]
 
 CONF = cfg.CONF
@@ -52,7 +59,7 @@ class VolumeOps(object):
     Management class for Volume-related tasks
     """
 
-    def __init__(self):
+    def __init__(self, *args, **kw):
         self._hostutils = utilsfactory.get_hostutils()
         self._vmutils = utilsfactory.get_vmutils()
         self._volutils = utilsfactory.get_volumeutils()
@@ -222,3 +229,111 @@ class VolumeOps(object):
 
     def get_target_from_disk_path(self, physical_drive_path):
         return self._volutils.get_target_from_disk_path(physical_drive_path)
+
+
+class HyperVSMBFSVolumeDriver(VolumeOps):
+
+    def __init__(self, *args, **kw):
+        super(HyperVSMBFSVolumeDriver, self).__init__(*args, **kw)
+        self.mount_base = CONF.hyperv.smbfs_mount_point_base
+
+    @staticmethod
+    def get_hash_str(base_str):
+        """returns string that represents hash of base_str (in hex format)."""
+        return hashlib.md5(base_str).hexdigest()
+
+    def get_local_disk_path(self, connection_info):
+        export = connection_info['data']['export']
+        disk_name = connection_info['data']['name']
+        export_hash = self.get_hash_str(export)
+        return os.path.join(self.mount_base, export_hash, disk_name)
+
+    def _mount_smbfs(self, export_path, options=None):
+        smb_opts = []
+        if options:
+            username = options.get('user')
+            passwd = options.get('password')
+            if username != 'guest':
+                smb_opts.append('/user:%s' % username)
+                smb_opts.append(passwd)
+
+        stdout_value, stderr_value = utils.execute('net', 'use',
+                                                   export_path,
+                                                   *smb_opts,
+                                                   '/persistent:yes')
+        if stdout_value.find('The command completed successfully') == -1:
+            raise vmutils.HyperVException(_('An error has occurred when '
+                                            'mounting smbfs share: %s')
+                                          % stdout_value)
+
+    def _ensure_mounted(self, export_path, options=None):
+        if os.path.isdir(self.mount_base) is False:
+            os.makedirs(self.mount_base)
+        export_hash = self.get_hash_str(export_path)
+
+        norm_path = export_path.replace('/', '\\')
+        mnt = self._mount_smbfs(norm_path, options)
+
+        link_path = os.path.join(self.mount_base, export_hash)
+
+        # You cannot test if a file is a link in python 2.7
+        if os.path.exists(link_path) is False:
+            stdout_value, stderr_value = utils.execute('cmd.exe', '/C',
+                                                       'mklink', link_path,
+                                                       norm_path)
+            if stdout_value.find('symbolic link created for') == -1:
+                raise vmutils.HyperVException(_('An error has occurred when '
+                                                'creating symbolic link: %s')
+                                              % stdout_value)
+
+    def parse_options(self, option_str):
+        opts_dict = {}
+        opts_list = []
+        if option_str:
+            for i in option_str.split():
+                if i == '-o':
+                    continue
+                for j in i.split(','):
+                    tmp_opt = j.split('=')
+                    if len(tmp_opt) > 1:
+                        opts_dict[tmp_opt[0]] = tmp_opt[1]
+                    else:
+                        opts_list.append(tmp_opt[0])
+        return opts_list, opts_dict
+
+    def attach_volume(self, connection_info, instance_name):
+        opts_str = connection_info['data'].get('options')
+        opts = self.parse_options(opts_str)
+
+        export = connection_info['data']['export']
+        disk_name = connection_info['data']['name']
+
+        self._ensure_mounted(export, opts[1])
+        disk_path = self.get_local_disk_path(connection_info)
+
+        if os.path.isfile(disk_path) is False:
+            raise vmutils.HyperVException(_('Could not find disk image: %s')
+                                          % disk_path)
+
+        try:
+            ctrller_path = self._vmutils.get_vm_scsi_controller(
+                instance_name)
+            slot = self._get_free_controller_slot(ctrller_path)
+            self._vmutils.attach_ide_drive(instance_name,
+                                           disk_path,
+                                           ctrller_path,
+                                           slot)
+        except Exception as exn:
+            LOG.exception(_('Attach volume failed: %s'), exn)
+            raise vmutils.HyperVException(_('Unable to attach volume '
+                                            'to instance %s') % instance_name)
+
+    def detach_volume(self, connection_info, instance_name):
+        LOG.debug(_("Detach_volume: %(connection_info)s "
+                    "from %(instance_name)s"),
+                  {'connection_info': connection_info,
+                   'instance_name': instance_name})
+
+        mounted_disk_path = self.get_local_disk_path(connection_info)
+        self._vmutils.detach_vhd_disk(
+            instance_name, mounted_disk_path)
