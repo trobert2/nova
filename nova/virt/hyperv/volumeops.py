@@ -306,7 +306,6 @@ class HyperVSMBFSVolumeDriver(VolumeOps):
         opts = self.parse_options(opts_str)
 
         export = connection_info['data']['export']
-        disk_name = connection_info['data']['name']
 
         self._ensure_mounted(export, opts[1])
         disk_path = self.get_local_disk_path(connection_info)
