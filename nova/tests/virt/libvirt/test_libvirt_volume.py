@@ -829,3 +829,51 @@ class LibvirtVolumeTestCase(test.NoDBTestCase):
 
         tree = conf.format_dom()
         self._assertFileTypeEquals(tree, TEST_VOLPATH)
+
+    def test_libvirt_smbfs_driver(self):
+        mnt_base = '/mnt'
+        self.flags(smbfs_mount_point_base=mnt_base)
+
+        libvirt_driver = volume.LibvirtSMBFSVolumeDriver(self.fake_conn)
+        export_string = '//192.168.1.1/volumes'
+        export_mnt_base = os.path.join(mnt_base,
+                libvirt_driver.get_hash_str(export_string))
+        file_path = os.path.join(export_mnt_base, self.name)
+
+        connection_info = {'data': {'export': export_string,
+                                    'name': self.name}}
+        conf = libvirt_driver.connect_volume(connection_info, self.disk_info)
+        tree = conf.format_dom()
+        self._assertFileTypeEquals(tree, file_path)
+        libvirt_driver.disconnect_volume(connection_info, "vde")
+
+        expected_commands = [
+            ('mkdir', '-p', export_mnt_base),
+            ('mount', '-t', 'cifs', export_string, export_mnt_base)]
+        self.assertEqual(self.executes, expected_commands)
+
+    def test_libvirt_smbfs_driver_with_opts(self):
+        mnt_base = '/mnt'
+        self.flags(smbfs_mount_point_base=mnt_base)
+
+        libvirt_driver = volume.LibvirtSMBFSVolumeDriver(self.fake_conn)
+        export_string = '//192.168.1.1/volumes'
+        options = '-o user=guest,password='
+        export_mnt_base = os.path.join(mnt_base,
+                libvirt_driver.get_hash_str(export_string))
+        file_path = os.path.join(export_mnt_base, self.name)
+
+        connection_info = {'data': {'export': export_string,
+                                    'name': self.name,
+                                    'options': options}}
+        conf = libvirt_driver.connect_volume(connection_info, self.disk_info)
+        tree = conf.format_dom()
+        self._assertFileTypeEquals(tree, file_path)
+        libvirt_driver.disconnect_volume(connection_info, "vde")
+
+        expected_commands = [
+            ('mkdir', '-p', export_mnt_base),
+            ('mount', '-t', 'cifs', '-o', 'user=guest,password=',
+             export_string, export_mnt_base)
+        ]
+        self.assertEqual(self.executes, expected_commands)
