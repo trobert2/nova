@@ -256,11 +256,11 @@ class HyperVSMBFSVolumeDriver(VolumeOps):
             if username != 'guest':
                 smb_opts.append('/user:%s' % username)
                 smb_opts.append(passwd)
+        smb_opts.append('/persistent:yes')
 
         stdout_value, stderr_value = utils.execute('net', 'use',
                                                    export_path,
-                                                   *smb_opts,
-                                                   '/persistent:yes')
+                                                   *smb_opts)
         if stdout_value.find('The command completed successfully') == -1:
             raise vmutils.HyperVException(_('An error has occurred when '
                                             'mounting smbfs share: %s')
