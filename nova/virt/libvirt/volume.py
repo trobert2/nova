@@ -70,9 +70,9 @@ volume_opts = [
                default=3,
                help='number of times to rediscover AoE target to find volume'),
     cfg.StrOpt('glusterfs_mount_point_base',
-               default=paths.state_path_def('mnt'),
-               help='Dir where the glusterfs volume is mounted on the '
-                    'compute node'),
+                default=paths.state_path_def('mnt'),
+                help='Dir where the glusterfs volume is mounted on the '
+                      'compute node'),
     cfg.BoolOpt('libvirt_iscsi_use_multipath',
                 default=False,
                 help='use multipath connection of the iSCSI volume'),
@@ -85,10 +85,10 @@ volume_opts = [
                default='$state_path/scality',
                help='Base dir where Scality SOFS shall be mounted'),
     cfg.ListOpt('qemu_allowed_storage_drivers',
-                default=[],
-                help='Protocols listed here will be accessed directly '
-                     'from QEMU. Currently supported protocols: [gluster]')
-]
+               default=[],
+               help='Protocols listed here will be accessed directly '
+                    'from QEMU. Currently supported protocols: [gluster]')
+    ]
 
 CONF = cfg.CONF
 CONF.register_opts(volume_opts)
@@ -149,7 +149,7 @@ class LibvirtBaseVolumeDriver(object):
                        % access_mode)
                 LOG.error(msg)
                 raise exception.InvalidVolumeAccessMode(
-                    access_mode=access_mode)
+                                                    access_mode=access_mode)
 
         return conf
 
@@ -736,7 +736,7 @@ class LibvirtAOEVolumeDriver(LibvirtBaseVolumeDriver):
 
             if self.tries >= CONF.num_aoe_discover_tries:
                 raise exception.NovaException(_("AoE device not found at %s") %
-                                              (aoedevpath))
+                                                (aoedevpath))
             LOG.warn(_("AoE volume not yet found at: %(aoedevpath)s. "
                        "Try number: %(tries)s"),
                      {'aoedevpath': aoedevpath,
