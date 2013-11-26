@@ -400,7 +400,6 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
                  {'task_state': task_states.IMAGE_UPLOADING,
                   'expected_state': task_states.IMAGE_PENDING_UPLOAD}}]
         func_call_matcher = matchers.FunctionCallMatcher(expected_calls)
-        self._create_vm()
         info = self.conn.get_info({'uuid': self.uuid,
                                    'node': self.instance_node})
         self._check_vm_info(info, power_state.RUNNING)
@@ -412,6 +411,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
         self.assertIsNone(func_call_matcher.match())
 
     def test_snapshot(self):
+        self._create_vm()
         self._test_snapshot()
 
     def test_snapshot_non_existent(self):
@@ -497,7 +497,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
         info = self.conn.get_info({'uuid': self.uuid,
                                    'node': self.instance_node})
         self._check_vm_info(info, power_state.SUSPENDED)
-        self.conn.resume(self.instance, self.network_info)
+        self.conn.resume(self.context, self.instance, self.network_info)
         info = self.conn.get_info({'uuid': self.uuid,
                                    'node': self.instance_node})
         self._check_vm_info(info, power_state.RUNNING)
@@ -505,7 +505,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
     def test_resume_non_existent(self):
         self._create_instance_in_the_db()
         self.assertRaises(exception.InstanceNotFound, self.conn.resume,
-                          self.instance, self.network_info)
+                          self.context, self.instance, self.network_info)
 
     def test_resume_not_suspended(self):
         self._create_vm()
@@ -513,7 +513,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
                                    'node': self.instance_node})
         self._check_vm_info(info, power_state.RUNNING)
         self.assertRaises(exception.InstanceResumeFailure, self.conn.resume,
-                          self.instance, self.network_info)
+                          self.context, self.instance, self.network_info)
 
     def test_power_on(self):
         self._create_vm()
@@ -755,7 +755,8 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
                        fake_wait_for_task)
 
         # perform the revert on our stubbed methods
-        self.conn.finish_revert_migration(instance=self.instance,
+        self.conn.finish_revert_migration(self.context,
+                                          instance=self.instance,
                                           network_info=None,
                                           power_on=power_on)
 
@@ -1139,6 +1140,29 @@ class VMwareAPIVCDriverTestCase(VMwareAPIVMTestCase):
 
         self.mox.ReplayAll()
 
+        self._create_vm()
+        self._test_snapshot()
+
+    def test_snapshot_using_file_manager(self):
+        self._create_vm()
+        uuid_str = uuidutils.generate_uuid()
+        self.mox.StubOutWithMock(uuidutils,
+                                 'generate_uuid')
+        uuidutils.generate_uuid().AndReturn(uuid_str)
+
+        self.mox.StubOutWithMock(vmops.VMwareVMOps,
+                                 '_delete_datastore_file')
+        # Check calls for delete vmdk and -flat.vmdk pair
+        self.conn._vmops._delete_datastore_file(
+                mox.IgnoreArg(),
+                "[fake-ds] vmware-tmp/%s-flat.vmdk" % uuid_str,
+                mox.IgnoreArg()).AndReturn(None)
+        self.conn._vmops._delete_datastore_file(
+                mox.IgnoreArg(),
+                "[fake-ds] vmware-tmp/%s.vmdk" % uuid_str,
+                mox.IgnoreArg()).AndReturn(None)
+
+        self.mox.ReplayAll()
         self._test_snapshot()
 
     def test_spawn_invalid_node(self):

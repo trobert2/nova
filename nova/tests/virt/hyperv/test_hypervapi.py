@@ -543,12 +543,14 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                    constants.HYPERV_VM_STATE_SUSPENDED)
 
     def test_resume(self):
-        self._test_vm_state_change(lambda i: self._conn.resume(i, None),
+        self._test_vm_state_change(lambda i: self._conn.resume(self._context,
+                                                               i, None),
                                    constants.HYPERV_VM_STATE_SUSPENDED,
                                    constants.HYPERV_VM_STATE_ENABLED)
 
     def test_resume_already_running(self):
-        self._test_vm_state_change(lambda i: self._conn.resume(i, None), None,
+        self._test_vm_state_change(lambda i: self._conn.resume(self._context,
+                                                               i, None), None,
                                    constants.HYPERV_VM_STATE_ENABLED)
 
     def test_power_off(self):
@@ -1593,7 +1595,8 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                          constants.HYPERV_VM_STATE_ENABLED)
 
         self._mox.ReplayAll()
-        self._conn.finish_revert_migration(instance, network_info, None,
+        self._conn.finish_revert_migration(self._context, instance,
+                                           network_info, None,
                                            power_on)
         self._mox.VerifyAll()
 

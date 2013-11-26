@@ -593,7 +593,7 @@ class API(base.Base):
             raise exception.ImageNotActive(image_id=image_id)
 
         if instance_type['memory_mb'] < int(image.get('min_ram') or 0):
-            raise exception.InstanceTypeMemoryTooSmall()
+            raise exception.FlavorMemoryTooSmall()
 
         # NOTE(johannes): root_gb is allowed to be 0 for legacy reasons
         # since libvirt interpreted the value differently than other
@@ -601,20 +601,30 @@ class API(base.Base):
         root_gb = instance_type['root_gb']
         if root_gb:
             if int(image.get('size') or 0) > root_gb * (1024 ** 3):
-                raise exception.InstanceTypeDiskTooSmall()
+                raise exception.FlavorDiskTooSmall()
 
             if int(image.get('min_disk') or 0) > root_gb:
-                    raise exception.InstanceTypeDiskTooSmall()
+                    raise exception.FlavorDiskTooSmall()
 
-    def _check_and_transform_bdm(self, base_options, min_count, max_count,
-                                 block_device_mapping, legacy_bdm):
+    def _check_and_transform_bdm(self, base_options, image_meta, min_count,
+                                 max_count, block_device_mapping, legacy_bdm):
+        # NOTE (ndipanov): Assume root dev name is 'vda' if not supplied.
+        #                  It's needed for legacy conversion to work.
+        root_device_name = (base_options.get('root_device_name') or 'vda')
+        image_ref = base_options.get('image_ref', '')
+
+        # Get the block device mappings defined by the image.
+        image_defined_bdms = \
+            image_meta.get('properties', {}).get('block_device_mapping', [])
+
         if legacy_bdm:
-            # NOTE (ndipanov): Assume root dev name is 'vda' if not supplied.
-            #                  It's needed for legacy conversion to work.
-            root_device_name = (base_options.get('root_device_name') or 'vda')
+            block_device_mapping += image_defined_bdms
             block_device_mapping = block_device.from_legacy_mapping(
-                block_device_mapping, base_options.get('image_ref', ''),
-                root_device_name)
+                 block_device_mapping, image_ref, root_device_name)
+        elif image_defined_bdms:
+            # NOTE (ndipanov): For now assume that image mapping is legacy
+            block_device_mapping += block_device.from_legacy_mapping(
+                image_defined_bdms, None, root_device_name)
 
         if min_count > 1 or max_count > 1:
             if any(map(lambda bdm: bdm['source_type'] == 'volume',
@@ -666,8 +676,7 @@ class API(base.Base):
                 raise exception.InvalidRequest(msg)
 
         if instance_type['disabled']:
-            raise exception.InstanceTypeNotFound(
-                    instance_type_id=instance_type['id'])
+            raise exception.FlavorNotFound(flavor_id=instance_type['id'])
 
         if user_data:
             l = len(user_data)
@@ -875,7 +884,7 @@ class API(base.Base):
                 block_device_mapping, auto_disk_config, reservation_id)
 
         block_device_mapping = self._check_and_transform_bdm(
-            base_options, min_count, max_count,
+            base_options, boot_meta, min_count, max_count,
             block_device_mapping, legacy_bdm)
 
         instances = self._provision_instances(context, instance_type,
@@ -1044,15 +1053,10 @@ class API(base.Base):
             image_mapping = self._prepare_image_mapping(instance_type,
                                                 instance_uuid, image_mapping)
 
-        # NOTE (ndipanov): For now assume that image mapping is legacy
-        image_bdm = block_device.from_legacy_mapping(
-            image_properties.get('block_device_mapping', []),
-            None, instance['root_device_name'])
-
         self._validate_bdm(context, instance, instance_type,
-                           block_device_mapping + image_mapping + image_bdm)
+                           block_device_mapping + image_mapping)
 
-        for mapping in (image_mapping, image_bdm, block_device_mapping):
+        for mapping in (image_mapping, block_device_mapping):
             if not mapping:
                 continue
             self._update_block_device_mapping(context,
@@ -1472,9 +1476,8 @@ class API(base.Base):
                 old_inst_type_id = migration.old_instance_type_id
                 try:
                     old_inst_type = flavors.get_flavor(old_inst_type_id)
-                except exception.InstanceTypeNotFound:
-                    LOG.warning(_("instance type %d not found"),
-                                old_inst_type_id)
+                except exception.FlavorNotFound:
+                    LOG.warning(_("Flavor %d not found"), old_inst_type_id)
                     pass
                 else:
                     instance_vcpus = old_inst_type['vcpus']
@@ -1596,7 +1599,7 @@ class API(base.Base):
             if instance['host']:
                 instance = self.update(context, instance,
                             task_state=task_states.RESTORING,
-                            expected_task_state=None,
+                            expected_task_state=[None],
                             deleted_at=None)
                 self.compute_rpcapi.restore_instance(context, instance)
             else:
@@ -1604,7 +1607,7 @@ class API(base.Base):
                             instance,
                             vm_state=vm_states.ACTIVE,
                             task_state=None,
-                            expected_task_state=None,
+                            expected_task_state=[None],
                             deleted_at=None)
 
             QUOTAS.commit(context, quota_reservations)
@@ -1625,7 +1628,7 @@ class API(base.Base):
 
         instance.task_state = task_states.POWERING_OFF
         instance.progress = 0
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         self._record_action_start(context, instance, instance_actions.STOP)
 
@@ -1652,7 +1655,7 @@ class API(base.Base):
         LOG.debug(_("Going to try to start instance"), instance=instance)
 
         instance.task_state = task_states.POWERING_ON
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         self._record_action_start(context, instance, instance_actions.START)
         # TODO(yamahata): injected_files isn't supported right now.
@@ -1720,9 +1723,6 @@ class API(base.Base):
 
         if search_opts is None:
             search_opts = {}
-
-        if 'all_tenants' in search_opts:
-            check_policy(context, "get_all_tenants", target)
 
         LOG.debug(_("Searching by: %s") % str(search_opts))
 
@@ -1828,7 +1828,7 @@ class API(base.Base):
         # to the backup_instance() method in nova/cells/messaging.py
 
         instance.task_state = task_states.IMAGE_BACKUP
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         self.compute_rpcapi.backup_instance(context, instance,
                                             image_meta['id'],
@@ -1857,7 +1857,7 @@ class API(base.Base):
         # to the snapshot_instance() method in nova/cells/messaging.py
 
         instance.task_state = task_states.IMAGE_SNAPSHOT
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         self.compute_rpcapi.snapshot_instance(context, instance,
                                               image_meta['id'])
@@ -1917,12 +1917,18 @@ class API(base.Base):
             properties['root_device_name'] = instance['root_device_name']
         properties.update(extra_properties or {})
 
+        # TODO(xqueralt): Use new style BDM in volume snapshots
         bdms = self.get_instance_bdms(context, instance)
 
         mapping = []
         for bdm in bdms:
             if bdm['no_device']:
                 continue
+
+            # Clean the BDM of the database related fields to prevent
+            # duplicates in the future (e.g. the id was being preserved)
+            for field in block_device.BlockDeviceDict._db_only_fields:
+                bdm.pop(field, None)
 
             volume_id = bdm.get('volume_id')
             if volume_id:
@@ -1935,7 +1941,11 @@ class API(base.Base):
                 snapshot = self.volume_api.create_snapshot_force(
                     context, volume['id'], name, volume['display_description'])
                 bdm['snapshot_id'] = snapshot['id']
-                bdm['volume_id'] = None
+
+                # Clean the extra volume related fields that will be generated
+                # when booting from the new snapshot.
+                bdm.pop('volume_id')
+                bdm.pop('connection_info')
 
             mapping.append(bdm)
 
@@ -2066,7 +2076,7 @@ class API(base.Base):
 
         instance = self.update(context, instance,
                                task_state=task_states.REBUILDING,
-                               expected_task_state=None,
+                               expected_task_state=[None],
                                # Unfortunately we need to set image_ref early,
                                # so API users can see it.
                                image_ref=image_href, kernel_id=kernel_id or "",
@@ -2105,7 +2115,11 @@ class API(base.Base):
         reservations = self._reserve_quota_delta(context, deltas)
 
         instance.task_state = task_states.RESIZE_REVERTING
-        instance.save(expected_task_state=None)
+        try:
+            instance.save(expected_task_state=[None])
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                QUOTAS.rollback(context, reservations)
 
         migration.status = 'reverting'
         migration.save()
@@ -2280,7 +2294,6 @@ class API(base.Base):
                    'new_instance_type_name': new_instance_type_name},
                   instance=instance)
 
-        # FIXME(sirp): both of these should raise InstanceTypeNotFound instead
         if not new_instance_type:
             raise exception.FlavorNotFound(flavor_id=flavor_id)
 
@@ -2323,7 +2336,7 @@ class API(base.Base):
         instance.task_state = task_states.RESIZE_PREP
         instance.progress = 0
         instance.update(extra_instance_updates)
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         filter_properties = {'ignore_hosts': []}
 
@@ -2360,7 +2373,7 @@ class API(base.Base):
         hypervisor.
         """
         instance.task_state = task_states.SHELVING
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         self._record_action_start(context, instance, instance_actions.SHELVE)
 
@@ -2382,7 +2395,7 @@ class API(base.Base):
     def shelve_offload(self, context, instance):
         """Remove a shelved instance from the hypervisor."""
         instance.task_state = task_states.SHELVING_OFFLOADING
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         self.compute_rpcapi.shelve_offload_instance(context, instance=instance)
 
@@ -2393,7 +2406,7 @@ class API(base.Base):
     def unshelve(self, context, instance):
         """Restore a shelved instance."""
         instance.task_state = task_states.UNSHELVING
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         self._record_action_start(context, instance, instance_actions.UNSHELVE)
 
@@ -2420,7 +2433,7 @@ class API(base.Base):
     def pause(self, context, instance):
         """Pause the given instance."""
         instance.task_state = task_states.PAUSING
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
         self._record_action_start(context, instance, instance_actions.PAUSE)
         self.compute_rpcapi.pause_instance(context, instance)
 
@@ -2431,7 +2444,7 @@ class API(base.Base):
     def unpause(self, context, instance):
         """Unpause the given instance."""
         instance.task_state = task_states.UNPAUSING
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
         self._record_action_start(context, instance, instance_actions.UNPAUSE)
         self.compute_rpcapi.unpause_instance(context, instance)
 
@@ -2447,7 +2460,7 @@ class API(base.Base):
     def suspend(self, context, instance):
         """Suspend the given instance."""
         instance.task_state = task_states.SUSPENDING
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
         self._record_action_start(context, instance, instance_actions.SUSPEND)
         self.compute_rpcapi.suspend_instance(context, instance)
 
@@ -2458,7 +2471,7 @@ class API(base.Base):
     def resume(self, context, instance):
         """Resume the given instance."""
         instance.task_state = task_states.RESUMING
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
         self._record_action_start(context, instance, instance_actions.RESUME)
         self.compute_rpcapi.resume_instance(context, instance)
 
@@ -2485,7 +2498,7 @@ class API(base.Base):
         self.update(context,
                     instance,
                     task_state=task_states.RESCUING,
-                    expected_task_state=None)
+                    expected_task_state=[None])
 
         self._record_action_start(context, instance, instance_actions.RESCUE)
 
@@ -2500,7 +2513,7 @@ class API(base.Base):
         self.update(context,
                     instance,
                     task_state=task_states.UNRESCUING,
-                    expected_task_state=None)
+                    expected_task_state=[None])
 
         self._record_action_start(context, instance, instance_actions.UNRESCUE)
 
@@ -2514,7 +2527,7 @@ class API(base.Base):
         self.update(context,
                     instance,
                     task_state=task_states.UPDATING_PASSWORD,
-                    expected_task_state=None)
+                    expected_task_state=[None])
 
         self._record_action_start(context, instance,
                                   instance_actions.CHANGE_PASSWORD)
@@ -2891,7 +2904,7 @@ class API(base.Base):
                   host_name or "another host", instance=instance)
 
         instance.task_state = task_states.MIGRATING
-        instance.save(expected_task_state=None)
+        instance.save(expected_task_state=[None])
 
         self.compute_task_api.live_migrate_instance(context, instance,
                 host_name, block_migration=block_migration,
@@ -2915,7 +2928,7 @@ class API(base.Base):
             LOG.error(msg)
             raise exception.ComputeServiceInUse(host=inst_host)
 
-        instance = self.update(context, instance, expected_task_state=None,
+        instance = self.update(context, instance, expected_task_state=[None],
                                task_state=task_states.REBUILDING)
 
         self._record_action_start(context, instance, instance_actions.EVACUATE)

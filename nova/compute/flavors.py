@@ -51,7 +51,11 @@ CONF.register_opts(flavor_opts)
 
 LOG = logging.getLogger(__name__)
 
-VALID_NAME_OR_ID_REGEX = re.compile("^[\w\.\- ]*$")
+# NOTE(luisg): Flavor names can include non-ascii characters so that users can
+# create flavor names in locales that use them, however flavor IDs are limited
+# to ascii characters.
+VALID_ID_REGEX = re.compile("^[\w\.\- ]*$")
+VALID_NAME_REGEX = re.compile("^[\w\.\- ]*$", re.UNICODE)
 
 
 def _int_or_none(val):
@@ -94,9 +98,10 @@ def create(name, memory, vcpus, root_gb, ephemeral_gb=0, flavorid=None,
     utils.check_string_length(name, 'name', min_length=1, max_length=255)
 
     # ensure name does not contain any special characters
-    valid_name = VALID_NAME_OR_ID_REGEX.search(name)
+    valid_name = VALID_NAME_REGEX.search(name)
     if not valid_name:
-        msg = _("names can only contain [a-zA-Z0-9_.- ]")
+        msg = _("Flavor names can only contain alphanumeric characters, "
+                "periods, dashes, underscores and spaces.")
         raise exception.InvalidInput(reason=msg)
 
     # NOTE(vish): Internally, flavorid is stored as a string but it comes
@@ -113,9 +118,10 @@ def create(name, memory, vcpus, root_gb, ephemeral_gb=0, flavorid=None,
                               max_length=255)
 
     # ensure flavor id does not contain any special characters
-    valid_flavor_id = VALID_NAME_OR_ID_REGEX.search(flavorid)
+    valid_flavor_id = VALID_ID_REGEX.search(flavorid)
     if not valid_flavor_id:
-        msg = _("id can only contain [a-zA-Z0-9_.- ]")
+        msg = _("Flavor id can only contain letters from A-Z (both cases), "
+                "periods, dashes, underscores and spaces.")
         raise exception.InvalidInput(reason=msg)
 
     # Some attributes are positive ( > 0) integers
@@ -150,7 +156,7 @@ def create(name, memory, vcpus, root_gb, ephemeral_gb=0, flavorid=None,
         return db.flavor_create(context.get_admin_context(), kwargs)
     except db_exc.DBError as e:
         LOG.exception(_('DB error: %s') % e)
-        raise exception.InstanceTypeCreateFailed()
+        raise exception.FlavorCreateFailed()
 
 
 def destroy(name):
@@ -161,7 +167,7 @@ def destroy(name):
         db.flavor_destroy(context.get_admin_context(), name)
     except (ValueError, exception.NotFound):
         LOG.exception(_('Instance type %s not found for deletion') % name)
-        raise exception.InstanceTypeNotFoundByName(instance_type_name=name)
+        raise exception.FlavorNotFoundByName(flavor_name=name)
 
 
 def get_all_flavors(ctxt=None, inactive=False, filters=None):

@@ -203,7 +203,7 @@ class VMwareESXDriver(driver.ComputeDriver):
         """Suspend the specified instance."""
         self._vmops.suspend(instance)
 
-    def resume(self, instance, network_info, block_device_info=None):
+    def resume(self, context, instance, network_info, block_device_info=None):
         """Resume the suspended VM instance."""
         self._vmops.resume(instance)
 
@@ -446,11 +446,11 @@ class VMwareVCDriver(VMwareESXDriver):
         _vmops = self._get_vmops_for_compute_node(instance['node'])
         _vmops.confirm_migration(migration, instance, network_info)
 
-    def finish_revert_migration(self, instance, network_info,
+    def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
         """Finish reverting a resize, powering back on the instance."""
         _vmops = self._get_vmops_for_compute_node(instance['node'])
-        _vmops.finish_revert_migration(instance, network_info,
+        _vmops.finish_revert_migration(context, instance, network_info,
                                        block_device_info, power_on)
 
     def finish_migration(self, context, migration, instance, disk_info,
@@ -676,7 +676,7 @@ class VMwareVCDriver(VMwareESXDriver):
         _vmops = self._get_vmops_for_compute_node(instance['node'])
         _vmops.suspend(instance)
 
-    def resume(self, instance, network_info, block_device_info=None):
+    def resume(self, context, instance, network_info, block_device_info=None):
         """Resume the suspended VM instance."""
         _vmops = self._get_vmops_for_compute_node(instance['node'])
         _vmops.resume(instance)

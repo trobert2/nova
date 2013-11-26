@@ -201,7 +201,7 @@ class PowerVMDriver(driver.ComputeDriver):
         raise NotImplementedError(_("Suspend is not supported by the"
                                     "PowerVM driver."))
 
-    def resume(self, instance, network_info, block_device_info=None):
+    def resume(self, context, instance, network_info, block_device_info=None):
         """resume the specified instance."""
         raise NotImplementedError(_("Resume is not supported by the"
                                     "PowerVM driver."))
@@ -311,7 +311,7 @@ class PowerVMDriver(driver.ComputeDriver):
         new_name = self._get_resize_name(instance['name'])
         self._powervm.destroy(new_name)
 
-    def finish_revert_migration(self, instance, network_info,
+    def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
         """Finish reverting a resize."""
 

@@ -47,7 +47,8 @@ def get_test_image_info(context, instance_ref):
     return image_service.show(context, image_id)
 
 
-def get_test_instance_type(context=None):
+def get_test_instance_type(context=None, options=None):
+    options = options or {}
     if not context:
         context = get_test_admin_context()
 
@@ -58,10 +59,13 @@ def get_test_instance_type(context=None):
                           'root_gb': 40,
                           'ephemeral_gb': 80,
                           'swap': 1024}
+
+    test_instance_type.update(options)
+
     try:
         instance_type_ref = nova.db.flavor_create(context,
                                                          test_instance_type)
-    except (exception.InstanceTypeExists, exception.InstanceTypeIdExists):
+    except (exception.FlavorExists, exception.FlavorIdExists):
         instance_type_ref = nova.db.flavor_get_by_name(context,
                                                               'kinda.big')
     return instance_type_ref

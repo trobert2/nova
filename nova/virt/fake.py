@@ -167,7 +167,7 @@ class FakeDriver(driver.ComputeDriver):
                                    block_device_info=None):
         pass
 
-    def finish_revert_migration(self, instance, network_info,
+    def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
         pass
 
@@ -198,7 +198,7 @@ class FakeDriver(driver.ComputeDriver):
     def suspend(self, instance):
         pass
 
-    def resume(self, instance, network_info, block_device_info=None):
+    def resume(self, context, instance, network_info, block_device_info=None):
         pass
 
     def destroy(self, context, instance, network_info, block_device_info=None,
@@ -290,6 +290,14 @@ class FakeDriver(driver.ComputeDriver):
         """
         volusage = []
         return volusage
+
+    def get_host_cpu_stats(self):
+        stats = {'kernel': 5664160000000L,
+                'idle': 1592705190000000L,
+                'user': 26728850000000L,
+                'iowait': 6121490000000L}
+        stats['frequency'] = 800
+        return stats
 
     def block_stats(self, instance_name, disk_id):
         return [0L, 0L, 0L, 0L, None]

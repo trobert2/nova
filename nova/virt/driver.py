@@ -389,11 +389,12 @@ class ComputeDriver(object):
         # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
 
-    def finish_revert_migration(self, instance, network_info,
+    def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
         """
         Finish reverting a resize.
 
+        :param context: the context for the finish_revert_migration
         :param instance: the instance being migrated/resized
         :param network_info:
            :py:meth:`~nova.network.manager.NetworkManager.get_instance_nw_info`
@@ -401,7 +402,6 @@ class ComputeDriver(object):
         :param power_on: True if the instance should be powered on, False
                          otherwise
         """
-        # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
 
     def pause(self, instance):
@@ -419,9 +419,16 @@ class ComputeDriver(object):
         # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
 
-    def resume(self, instance, network_info, block_device_info=None):
-        """resume the specified instance."""
-        # TODO(Vek): Need to pass context in for access to auth_token
+    def resume(self, context, instance, network_info, block_device_info=None):
+        """
+        resume the specified instance.
+
+        :param context: the context for the resume
+        :param instance: the instance being resumed
+        :param network_info:
+           :py:meth:`~nova.network.manager.NetworkManager.get_instance_nw_info`
+        :param block_device_info: instance volume block device info
+        """
         raise NotImplementedError()
 
     def resume_state_on_host_boot(self, context, instance, network_info,
@@ -504,12 +511,14 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
-    def post_live_migration(self, ctxt, instance_ref, block_device_info):
+    def post_live_migration(self, ctxt, instance_ref, block_device_info,
+                            migrate_data=None):
         """Post operation of live migration at source host.
 
         :param ctxt: security context
         :instance_ref: instance object that was migrated
         :block_device_info: instance block device information
+        :param migrate_data: if not None, it is a dict which has data
         """
         pass
 
@@ -797,6 +806,25 @@ class ComputeDriver(object):
         'dev_id', 'label' and other optional device specific information.
 
         Refer to the objects/pci_device.py for more idea of these keys.
+        """
+        raise NotImplementedError()
+
+    def get_host_cpu_stats(self):
+        """Get the currently known host CPU stats.
+
+        :returns: a dict containing the CPU stat info, eg:
+                  {'kernel': kern,
+                   'idle': idle,
+                   'user': user,
+                   'iowait': wait,
+                   'frequency': freq},
+                  where kern and user indicate the cumulative CPU time
+                  (nanoseconds) spent by kernel and user processes
+                  respectively, idle indicates the cumulative idle CPU time
+                  (nanoseconds), wait indicates the cumulative I/O wait CPU
+                  time (nanoseconds), since the host is booting up; freq
+                  indicates the current CPU frequency (MHz). All values are
+                  long integers.
         """
         raise NotImplementedError()
 

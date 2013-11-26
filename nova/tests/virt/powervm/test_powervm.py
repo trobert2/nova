@@ -440,9 +440,11 @@ class PowerVMDriverTestCase(test.TestCase):
 
         self.mox.ReplayAll()
 
-        self.powervm_connection.finish_revert_migration(inst, network_info,
-                                                    block_device_info=None,
-                                                    power_on=power_on)
+        self.powervm_connection.finish_revert_migration(
+                                                context.get_admin_context(),
+                                                inst, network_info,
+                                                block_device_info=None,
+                                                power_on=power_on)
 
     def test_finish_revert_migration_after_crash(self):
         self._test_finish_revert_migration_after_crash(True, True, True)
@@ -841,7 +843,8 @@ class PowerVMDriverTestCase(test.TestCase):
     def test_resume(self):
         # Check to make sure the method raises NotImplementedError.
         self.assertRaises(NotImplementedError, self.powervm_connection.resume,
-                          instance=None, network_info=None)
+                          context.get_admin_context(), instance=None,
+                          network_info=None)
 
     def test_host_power_action(self):
         # Check to make sure the method raises NotImplementedError.

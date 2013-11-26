@@ -14,6 +14,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import contextlib
 from lxml import etree
 import mock
 from oslo.config import cfg
@@ -317,16 +318,16 @@ class LibvirtVifTestCase(test.TestCase):
                              node.find("target").get("dev"))
 
     def test_model_novirtio(self):
-        self.flags(libvirt_use_virtio_for_bridges=False,
-                   libvirt_type='kvm')
+        self.flags(libvirt_use_virtio_for_bridges=False)
+        self.flags(virt_type='kvm', group='libvirt')
 
         d = vif.LibvirtGenericVIFDriver(self._get_conn())
         xml = self._get_instance_xml(d, self.vif_bridge)
         self._assertModel(xml)
 
     def test_model_kvm(self):
-        self.flags(libvirt_use_virtio_for_bridges=True,
-                   libvirt_type='kvm')
+        self.flags(libvirt_use_virtio_for_bridges=True)
+        self.flags(virt_type='kvm', group='libvirt')
 
         d = vif.LibvirtGenericVIFDriver(self._get_conn())
         xml = self._get_instance_xml(d, self.vif_bridge)
@@ -334,8 +335,8 @@ class LibvirtVifTestCase(test.TestCase):
         self._assertModel(xml, "virtio")
 
     def test_model_kvm_custom(self):
-        self.flags(libvirt_use_virtio_for_bridges=True,
-                   libvirt_type='kvm')
+        self.flags(libvirt_use_virtio_for_bridges=True)
+        self.flags(virt_type='kvm', group='libvirt')
 
         d = vif.LibvirtGenericVIFDriver(self._get_conn())
         image_meta = {'properties': {'hw_vif_model': 'e1000'}}
@@ -344,8 +345,8 @@ class LibvirtVifTestCase(test.TestCase):
         self._assertModel(xml, "e1000")
 
     def test_model_kvm_bogus(self):
-        self.flags(libvirt_use_virtio_for_bridges=True,
-                   libvirt_type='kvm')
+        self.flags(libvirt_use_virtio_for_bridges=True)
+        self.flags(virt_type='kvm', group='libvirt')
 
         d = vif.LibvirtGenericVIFDriver(self._get_conn())
         image_meta = {'properties': {'hw_vif_model': 'acme'}}
@@ -356,8 +357,8 @@ class LibvirtVifTestCase(test.TestCase):
                           image_meta)
 
     def test_model_qemu(self):
-        self.flags(libvirt_use_virtio_for_bridges=True,
-                   libvirt_type='qemu')
+        self.flags(libvirt_use_virtio_for_bridges=True)
+        self.flags(virt_type='qemu', group='libvirt')
 
         d = vif.LibvirtGenericVIFDriver(self._get_conn())
         xml = self._get_instance_xml(d, self.vif_bridge)
@@ -370,8 +371,8 @@ class LibvirtVifTestCase(test.TestCase):
         self._assertModel(xml, "virtio", "qemu")
 
     def test_model_xen(self):
-        self.flags(libvirt_use_virtio_for_bridges=True,
-                   libvirt_type='xen')
+        self.flags(libvirt_use_virtio_for_bridges=True)
+        self.flags(virt_type='xen', group='libvirt')
 
         d = vif.LibvirtGenericVIFDriver(self._get_conn("xen:///system"))
         xml = self._get_instance_xml(d, self.vif_bridge)
@@ -425,6 +426,53 @@ class LibvirtVifTestCase(test.TestCase):
         with mock.patch.object(linux_net, 'delete_ivs_vif_port') as delete:
             delete.side_effect = processutils.ProcessExecutionError
             d.unplug_ivs_ethernet(None, self.vif_ovs)
+
+    def test_unplug_ovs_hybrid(self):
+        calls = {
+            'device_exists': [mock.call('qbrvif-xxx-yyy'),
+                              mock.call('qvovif-xxx-yyy')],
+            'execute': [mock.call('brctl', 'delif', 'qbrvif-xxx-yyy',
+                                  'qvbvif-xxx-yyy', run_as_root=True),
+                        mock.call('ip', 'link', 'set',
+                                  'qbrvif-xxx-yyy', 'down', run_as_root=True),
+                        mock.call('brctl', 'delbr',
+                                  'qbrvif-xxx-yyy', run_as_root=True),
+                        mock.call('ovs-vsctl', 'del-port',
+                                  'br0', 'qvovif-xxx-yyy', run_as_root=True),
+                        mock.call('ip', 'link', 'delete',
+                                  'qvovif-xxx-yyy', run_as_root=True,
+                                  check_exit_code=[0, 2, 254])]
+        }
+        with contextlib.nested(
+                mock.patch.object(linux_net, 'device_exists',
+                                  return_value=True),
+                mock.patch.object(utils, 'execute'),
+                mock.patch.object(linux_net, 'delete_ivs_vif_port')
+        ) as (device_exists, execute, delete_ivs_vif_port):
+            d = vif.LibvirtGenericVIFDriver(self._get_conn(ver=9010))
+            d.unplug_ovs_hybrid(None, self.vif_ovs)
+            device_exists.assert_has_calls(calls['device_exists'])
+            execute.assert_has_calls(calls['execute'])
+            delete_ivs_vif_port.assert_has_calls([])
+
+    def test_unplug_ovs_hybrid_bridge_does_not_exist(self):
+        calls = {
+            'device_exists': [mock.call('qbrvif-xxx-yyy'),
+                              mock.call('qvovif-xxx-yyy')],
+            'execute': [mock.call('ovs-vsctl', 'del-port', 'br0',
+                                  'qvovif-xxx-yyy', run_as_root=True)]
+        }
+        with contextlib.nested(
+                mock.patch.object(linux_net, 'device_exists',
+                                  return_value=False),
+                mock.patch.object(utils, 'execute'),
+                mock.patch.object(linux_net, 'delete_ivs_vif_port')
+        ) as (device_exists, execute, delete_ivs_vif_port):
+            d = vif.LibvirtGenericVIFDriver(self._get_conn(ver=9010))
+            d.unplug_ovs_hybrid(None, self.vif_ovs)
+            device_exists.assert_has_calls(calls['device_exists'])
+            execute.assert_has_calls(calls['execute'])
+            delete_ivs_vif_port.assert_has_calls([])
 
     def test_unplug_ivs_hybrid(self):
         d = vif.LibvirtGenericVIFDriver(self._get_conn(ver=9010))

@@ -25,7 +25,7 @@ from nova import test
 from nova.tests.virt.xenapi import stubs
 from nova.virt import fake
 from nova.virt.xenapi import agent as xenapi_agent
-from nova.virt.xenapi import driver as xenapi_conn
+from nova.virt.xenapi.client import session as xenapi_session
 from nova.virt.xenapi import fake as xenapi_fake
 from nova.virt.xenapi import vm_utils
 from nova.virt.xenapi import vmops
@@ -39,9 +39,8 @@ class VMOpsTestBase(stubs.XenAPITestBaseNoDB):
 
     def _setup_mock_vmops(self, product_brand=None, product_version=None):
         stubs.stubout_session(self.stubs, xenapi_fake.SessionBase)
-        self._session = xenapi_conn.XenAPISession('test_url', 'root',
-                                                  'test_pass',
-                                                  fake.FakeVirtAPI())
+        self._session = xenapi_session.XenAPISession('test_url', 'root',
+                                                     'test_pass')
         self.vmops = vmops.VMOps(self._session, fake.FakeVirtAPI())
 
     def create_vm(self, name, state="running"):
@@ -83,6 +82,7 @@ class VMOpsTestCase(VMOpsTestBase):
                                                   vm_shutdown=True):
         instance = {'name': 'foo',
                     'task_state': task_states.RESIZE_MIGRATING}
+        context = 'fake_context'
 
         self.mox.StubOutWithMock(vm_utils, 'lookup')
         self.mox.StubOutWithMock(self._vmops, '_destroy')
@@ -107,7 +107,7 @@ class VMOpsTestCase(VMOpsTestBase):
 
         self.mox.ReplayAll()
 
-        self._vmops.finish_revert_migration(instance, [])
+        self._vmops.finish_revert_migration(context, instance, [])
 
     def test_finish_revert_migration_after_crash(self):
         self._test_finish_revert_migration_after_crash(True, True)
@@ -763,8 +763,9 @@ class CreateVMRecordTestCase(VMOpsTestBase):
         disk_image_type = "vhd"
         kernel_file = "kernel"
         ramdisk_file = "ram"
-        image_meta = "image_meta"
         device_id = "0002"
+        image_properties = {"xenapi_device_id": device_id}
+        image_meta = {"properties": image_properties}
         session = "session"
         self.vmops._session = session
         mock_get_vm_device_id.return_value = device_id
@@ -773,6 +774,6 @@ class CreateVMRecordTestCase(VMOpsTestBase):
         self.vmops._create_vm_record(context, instance, name_label,
             disk_image_type, kernel_file, ramdisk_file, image_meta)
 
-        vm_utils.get_vm_device_id.assert_called_with(session, image_meta)
+        mock_get_vm_device_id.assert_called_with(session, image_properties)
         mock_create_vm.assert_called_with(session, instance, name_label,
             kernel_file, ramdisk_file, False, device_id)

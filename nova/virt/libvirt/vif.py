@@ -43,7 +43,7 @@ libvirt_vif_opts = [
 
 CONF = cfg.CONF
 CONF.register_opts(libvirt_vif_opts)
-CONF.import_opt('libvirt_type', 'nova.virt.libvirt.driver')
+CONF.import_opt('virt_type', 'nova.virt.libvirt.driver', group='libvirt')
 CONF.import_opt('use_ipv6', 'nova.netconf')
 
 # Since libvirt 0.9.11, <interface type='bridge'>
@@ -111,19 +111,19 @@ class LibvirtBaseVIFDriver(object):
         # Else if the virt type is KVM/QEMU, use virtio according
         # to the global config parameter
         if (model is None and
-            CONF.libvirt_type in ('kvm', 'qemu') and
+            CONF.libvirt.virt_type in ('kvm', 'qemu') and
                     CONF.libvirt_use_virtio_for_bridges):
             model = "virtio"
 
         # Workaround libvirt bug, where it mistakenly
         # enables vhost mode, even for non-KVM guests
-        if model == "virtio" and CONF.libvirt_type == "qemu":
+        if model == "virtio" and CONF.libvirt.virt_type == "qemu":
             driver = "qemu"
 
-        if not is_vif_model_valid_for_virt(CONF.libvirt_type,
+        if not is_vif_model_valid_for_virt(CONF.libvirt.virt_type,
                                            model):
             raise exception.UnsupportedHardware(model=model,
-                                                virt=CONF.libvirt_type)
+                                                virt=CONF.libvirt.virt_type)
 
         designer.set_vif_guest_frontend_config(
             conf, vif['address'], model, driver)
@@ -628,10 +628,13 @@ class LibvirtGenericVIFDriver(LibvirtBaseVIFDriver):
             br_name = self.get_br_name(vif['id'])
             v1_name, v2_name = self.get_veth_pair_names(vif['id'])
 
-            utils.execute('brctl', 'delif', br_name, v1_name, run_as_root=True)
-            utils.execute('ip', 'link', 'set', br_name, 'down',
-                          run_as_root=True)
-            utils.execute('brctl', 'delbr', br_name, run_as_root=True)
+            if linux_net.device_exists(br_name):
+                utils.execute('brctl', 'delif', br_name, v1_name,
+                              run_as_root=True)
+                utils.execute('ip', 'link', 'set', br_name, 'down',
+                              run_as_root=True)
+                utils.execute('brctl', 'delbr', br_name,
+                              run_as_root=True)
 
             linux_net.delete_ovs_vif_port(self.get_bridge_name(vif),
                                           v2_name)

@@ -101,6 +101,12 @@ compute_opts = [
     cfg.StrOpt('instances_path',
                default=paths.state_path_def('instances'),
                help='where instances are stored on disk'),
+    cfg.StrOpt('image_cache_subdirectory_name',
+               default='_base',
+               help="Where cached images are stored under $instances_path."
+                    "This is NOT the full path - just a folder name."
+                    "For per-compute-host cached images, set to _base_$my_ip",
+               deprecated_name='base_dir_name'),
     cfg.BoolOpt('instance_usage_audit',
                default=False,
                help="Generate periodic compute.instance.exists notifications"),
@@ -589,21 +595,18 @@ class ComputeManager(manager.SchedulerDependentManager):
         Complete deletion for instances in DELETED status but not marked as
         deleted in the DB
         """
-        self.conductor_api.instance_destroy(context, instance)
-        system_meta = utils.metadata_to_dict(instance['system_metadata'])
+        instance.destroy()
         bdms = self._get_instance_volume_bdms(context, instance)
-        instance_vcpus = instance['vcpus']
-        instance_memory_mb = instance['memory_mb']
         quotas = quotas_obj.Quotas()
         project_id, user_id = quotas_obj.ids_from_instance(context, instance)
         quotas.reserve(context, project_id=project_id, user_id=user_id,
-                       instances=-1, cores=-instance_vcpus,
-                       ram=-instance_memory_mb)
+                       instances=-1, cores=-instance.vcpus,
+                       ram=-instance.memory_mb)
         self._complete_deletion(context,
                                 instance,
                                 bdms,
                                 quotas,
-                                system_meta)
+                                instance.system_metadata)
 
     def _complete_deletion(self, context, instance, bdms,
                            quotas, system_meta):
@@ -615,7 +618,7 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         # NOTE(ndipanov): Delete the dummy image BDM as well. This will not
         #                 be needed once the manager code is using the image
-        if instance['image_ref']:
+        if instance.image_ref:
             # Do not convert to legacy here - we want them all
             leftover_bdm = \
                 self.conductor_api.block_device_mapping_get_all_by_instance(
@@ -629,20 +632,20 @@ class ComputeManager(manager.SchedulerDependentManager):
         if CONF.vnc_enabled or CONF.spice.enabled:
             if CONF.cells.enable:
                 self.cells_rpcapi.consoleauth_delete_tokens(context,
-                        instance['uuid'])
+                        instance.uuid)
             else:
                 self.consoleauth_rpcapi.delete_tokens_for_instance(context,
-                        instance['uuid'])
+                        instance.uuid)
 
     def _init_instance(self, context, instance):
         '''Initialize this instance during service init.'''
 
         # instance was supposed to shut down - don't attempt
         # recovery in any case
-        if instance['vm_state'] == vm_states.SOFT_DELETED:
+        if instance.vm_state == vm_states.SOFT_DELETED:
             return
 
-        if instance['vm_state'] == vm_states.DELETED:
+        if instance.vm_state == vm_states.DELETED:
             try:
                 self._complete_partial_deletion(context, instance)
             except Exception:
@@ -657,19 +660,19 @@ class ComputeManager(manager.SchedulerDependentManager):
             self.driver.plug_vifs(instance, net_info)
         except NotImplementedError as e:
             LOG.debug(e, instance=instance)
-        if instance['task_state'] == task_states.RESIZE_MIGRATING:
+        if instance.task_state == task_states.RESIZE_MIGRATING:
             # We crashed during resize/migration, so roll back for safety
             try:
                 # NOTE(mriedem): check old_vm_state for STOPPED here, if it's
                 # not in system_metadata we default to True for backwards
                 # compatibility
-                sys_meta = utils.instance_sys_meta(instance)
-                power_on = sys_meta.get('old_vm_state') != vm_states.STOPPED
+                power_on = (instance.system_metadata.get('old_vm_state') !=
+                            vm_states.STOPPED)
 
                 block_dev_info = self._get_instance_volume_block_device_info(
                             context, instance)
 
-                self.driver.finish_revert_migration(
+                self.driver.finish_revert_migration(context,
                     instance, net_info, block_dev_info, power_on)
 
             except Exception as e:
@@ -679,10 +682,10 @@ class ComputeManager(manager.SchedulerDependentManager):
                 LOG.info(_('Instance found in migrating state during '
                            'startup. Resetting task_state'),
                          instance=instance)
-                instance = self._instance_update(context, instance['uuid'],
-                                                 task_state=None)
+                instance.task_state = None
+                instance.save()
 
-        db_state = instance['power_state']
+        db_state = instance.power_state
         drv_state = self._get_power_state(context, instance)
         expect_running = (db_state == power_state.RUNNING and
                           drv_state != db_state)
@@ -710,7 +713,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                 # NOTE(vish): The instance failed to resume, so we set the
                 #             instance to error and attempt to continue.
                 LOG.warning(_('Failed to resume instance'), instance=instance)
-                self._set_instance_error_state(context, instance['uuid'])
+                self._set_instance_error_state(context, instance.uuid)
 
         elif drv_state == power_state.RUNNING:
             # VMwareAPI drivers will raise an exception
@@ -958,7 +961,8 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         try:
             self._start_building(context, instance)
-        except exception.InstanceNotFound:
+        except (exception.InstanceNotFound,
+                exception.UnexpectedDeletingTaskStateError):
             msg = _("Instance disappeared before we could start it")
             # Quickly bail out of here
             raise exception.BuildAbortException(instance_uuid=instance['uuid'],
@@ -1028,7 +1032,8 @@ class ComputeManager(manager.SchedulerDependentManager):
                                        network_info, block_device_info,
                                        injected_files, admin_password,
                                        set_access_ip=set_access_ip)
-        except exception.InstanceNotFound:
+        except (exception.InstanceNotFound,
+                exception.UnexpectedDeletingTaskStateError):
             # the instance got deleted during the spawn
             # Make sure the async call finishes
             msg = _("Instance disappeared during build")
@@ -1044,18 +1049,12 @@ class ComputeManager(manager.SchedulerDependentManager):
                 instance_uuid=instance['uuid'],
                 reason=msg)
         except exception.UnexpectedTaskStateError as e:
-            exc_info = sys.exc_info()
-            # Make sure the async call finishes
-            if network_info is not None:
-                network_info.wait(do_raise=False)
-            actual_task_state = e.kwargs.get('actual', None)
-            if actual_task_state == 'deleting':
-                msg = _('Instance was deleted during spawn.')
-                LOG.debug(msg, instance=instance)
-                raise exception.BuildAbortException(
-                        instance_uuid=instance['uuid'], reason=msg)
-            else:
-                raise exc_info[0], exc_info[1], exc_info[2]
+            # Don't try to reschedule, just log and reraise.
+            with excutils.save_and_reraise_exception():
+                LOG.debug(e.format_message(), instance=instance)
+                # Make sure the async call finishes
+                if network_info is not None:
+                    network_info.wait(do_raise=False)
         except Exception:
             exc_info = sys.exc_info()
             # try to re-schedule instance:
@@ -1290,7 +1289,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         instance = self._instance_update(context, instance['uuid'],
                                          vm_state=vm_states.BUILDING,
                                          task_state=task_states.NETWORKING,
-                                         expected_task_state=None)
+                                         expected_task_state=[None])
         is_vpn = pipelib.is_vpn_image(instance['image_ref'])
         return network_model.NetworkInfoAsyncWrapper(
                 self._allocate_network_async, context, instance,
@@ -1529,7 +1528,8 @@ class ComputeManager(manager.SchedulerDependentManager):
                                               legacy=False)
         block_device_mapping = (
             driver_block_device.convert_volumes(bdms) +
-            driver_block_device.convert_snapshots(bdms))
+            driver_block_device.convert_snapshots(bdms) +
+            driver_block_device.convert_images(bdms))
 
         if not refresh_conn_info:
             # if the block_device_mapping has no value in connection_info
@@ -2469,7 +2469,8 @@ class ComputeManager(manager.SchedulerDependentManager):
 
             self._notify_about_instance_usage(context, instance,
                                               "snapshot.end")
-        except exception.InstanceNotFound:
+        except (exception.InstanceNotFound,
+                exception.UnexpectedDeletingTaskStateError):
             # the instance got deleted during the snapshot
             # Quickly bail out of here
             msg = _("Instance disappeared during snapshot")
@@ -2477,13 +2478,6 @@ class ComputeManager(manager.SchedulerDependentManager):
         except exception.ImageNotFound:
             msg = _("Image not found")
             LOG.debug(msg, instance=instance)
-        except exception.UnexpectedTaskStateError as e:
-            actual_task_state = e.kwargs.get('actual', None)
-            if actual_task_state == 'deleting':
-                msg = _('Instance was deleted during snapshot.')
-                LOG.debug(msg, instance=instance)
-            else:
-                raise
 
     @rpc_common.client_exceptions(NotImplementedError)
     def volume_snapshot_create(self, context, instance, volume_id,
@@ -2960,7 +2954,7 @@ class ComputeManager(manager.SchedulerDependentManager):
                     context, instance, refresh_conn_info=True)
 
             power_on = old_vm_state != vm_states.STOPPED
-            self.driver.finish_revert_migration(instance,
+            self.driver.finish_revert_migration(context, instance,
                                        network_info,
                                        block_device_info, power_on)
 
@@ -3448,7 +3442,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         block_device_info = self._get_instance_volume_block_device_info(
                             context, instance)
 
-        self.driver.resume(instance, network_info,
+        self.driver.resume(context, instance, network_info,
                            block_device_info)
 
         instance.power_state = self._get_power_state(context, instance)
@@ -4230,7 +4224,8 @@ class ComputeManager(manager.SchedulerDependentManager):
         # Cleanup source host post live-migration
         block_device_info = self._get_instance_volume_block_device_info(
                             ctxt, instance_ref)
-        self.driver.post_live_migration(ctxt, instance_ref, block_device_info)
+        self.driver.post_live_migration(ctxt, instance_ref, block_device_info,
+                                        migrate_data)
 
         # Detaching volumes.
         connector = self.driver.get_volume_connector(instance_ref)
@@ -4445,7 +4440,7 @@ class ComputeManager(manager.SchedulerDependentManager):
         This is implemented by keeping a cache of uuids of instances
         that live on this host.  On each call, we pop one off of a
         list, pull the DB record, and try the call to the network API.
-        If anything errors, we don't care.  It's possible the instance
+        If anything errors don't fail, as it's possible the instance
         has been deleted, etc.
         """
         heal_interval = CONF.heal_instance_info_cache_interval
@@ -4486,9 +4481,8 @@ class ComputeManager(manager.SchedulerDependentManager):
             self._get_instance_nw_info(context, instance)
             LOG.debug(_('Updated the info_cache for instance'),
                       instance=instance)
-        except Exception:
-            # We don't care about any failures
-            pass
+        except Exception as e:
+            LOG.debug(_("An error occurred: %s"), e)
 
     @periodic_task.periodic_task
     def _poll_rebooting_instances(self, context):
@@ -4530,7 +4524,8 @@ class ComputeManager(manager.SchedulerDependentManager):
 
         mig_list_cls = migration_obj.MigrationList
         migrations = mig_list_cls.get_unconfirmed_by_dest_compute(
-                context, CONF.resize_confirm_window, self.host)
+                context, CONF.resize_confirm_window, self.host,
+                use_slave=True)
 
         migrations_info = dict(migration_count=len(migrations),
                 confirm_window=CONF.resize_confirm_window)
@@ -4557,7 +4552,8 @@ class ComputeManager(manager.SchedulerDependentManager):
             expected_attrs = ['metadata', 'system_metadata']
             try:
                 instance = instance_obj.Instance.get_by_uuid(context,
-                            instance_uuid, expected_attrs=expected_attrs)
+                            instance_uuid, expected_attrs=expected_attrs,
+                            use_slave=True)
             except exception.InstanceNotFound:
                 reason = (_("Instance %s not found") %
                           instance_uuid)

@@ -697,6 +697,121 @@ class ServersControllerTest(ControllerTest):
 
         self.assertIn('servers', res)
 
+    def test_tenant_id_filter_no_admin_context(self):
+        def fake_get_all(context, filters=None, sort_key=None,
+                         sort_dir='desc', limit=None, marker=None,
+                         columns_to_join=None):
+            self.assertNotEqual(filters, None)
+            self.assertEqual(filters['project_id'], 'fake')
+            return [fakes.stub_instance(100)]
+
+        self.stubs.Set(db, 'instance_get_all_by_filters',
+                       fake_get_all)
+
+        req = fakes.HTTPRequestV3.blank('/servers?tenant_id=newfake')
+        res = self.controller.index(req)
+        self.assertTrue('servers' in res)
+
+    def test_tenant_id_filter_implies_all_tenants(self):
+        def fake_get_all(context, filters=None, sort_key=None,
+                         sort_dir='desc', limit=None, marker=None,
+                         columns_to_join=None):
+            self.assertNotEqual(filters, None)
+            # The project_id assertion checks that the project_id
+            # filter is set to that specified in the request url and
+            # not that of the context, verifying that the all_tenants
+            # flag was enabled
+            self.assertEqual(filters['project_id'], 'newfake')
+            self.assertFalse(filters.get('tenant_id'))
+            return [fakes.stub_instance(100)]
+
+        self.stubs.Set(db, 'instance_get_all_by_filters',
+                       fake_get_all)
+
+        req = fakes.HTTPRequestV3.blank('/servers?tenant_id=newfake',
+                                      use_admin_context=True)
+        res = self.controller.index(req)
+        self.assertTrue('servers' in res)
+
+    def test_all_tenants_param_normal(self):
+        def fake_get_all(context, filters=None, sort_key=None,
+                         sort_dir='desc', limit=None, marker=None,
+                         columns_to_join=None):
+            self.assertNotIn('project_id', filters)
+            return [fakes.stub_instance(100)]
+
+        self.stubs.Set(db, 'instance_get_all_by_filters',
+                       fake_get_all)
+
+        req = fakes.HTTPRequestV3.blank('/servers?all_tenants',
+                                      use_admin_context=True)
+        res = self.controller.index(req)
+
+        self.assertIn('servers', res)
+
+    def test_all_tenants_param_one(self):
+        def fake_get_all(context, filters=None, sort_key=None,
+                         sort_dir='desc', limit=None, marker=None,
+                         columns_to_join=None):
+            self.assertNotIn('project_id', filters)
+            return [fakes.stub_instance(100)]
+
+        self.stubs.Set(db, 'instance_get_all_by_filters',
+                       fake_get_all)
+
+        req = fakes.HTTPRequestV3.blank('/servers?all_tenants=1',
+                                      use_admin_context=True)
+        res = self.controller.index(req)
+
+        self.assertIn('servers', res)
+
+    def test_all_tenants_param_zero(self):
+        def fake_get_all(context, filters=None, sort_key=None,
+                         sort_dir='desc', limit=None, marker=None,
+                         columns_to_join=None):
+            self.assertNotIn('all_tenants', filters)
+            return [fakes.stub_instance(100)]
+
+        self.stubs.Set(db, 'instance_get_all_by_filters',
+                       fake_get_all)
+
+        req = fakes.HTTPRequestV3.blank('/servers?all_tenants=0',
+                                      use_admin_context=True)
+        res = self.controller.index(req)
+
+        self.assertIn('servers', res)
+
+    def test_all_tenants_param_false(self):
+        def fake_get_all(context, filters=None, sort_key=None,
+                         sort_dir='desc', limit=None, marker=None,
+                         columns_to_join=None):
+            self.assertNotIn('all_tenants', filters)
+            return [fakes.stub_instance(100)]
+
+        self.stubs.Set(db, 'instance_get_all_by_filters',
+                       fake_get_all)
+
+        req = fakes.HTTPRequestV3.blank('/servers?all_tenants=false',
+                                      use_admin_context=True)
+        res = self.controller.index(req)
+
+        self.assertIn('servers', res)
+
+    def test_all_tenants_param_invalid(self):
+        def fake_get_all(context, filters=None, sort_key=None,
+                         sort_dir='desc', limit=None, marker=None,
+                         columns_to_join=None):
+            self.assertNotIn('all_tenants', filters)
+            return [fakes.stub_instance(100)]
+
+        self.stubs.Set(db, 'instance_get_all_by_filters',
+                       fake_get_all)
+
+        req = fakes.HTTPRequestV3.blank('/servers?all_tenants=xxx',
+                                      use_admin_context=True)
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          self.controller.index, req)
+
     def test_admin_restricted_tenant(self):
         def fake_get_all(context, filters=None, sort_key=None,
                          sort_dir='desc', limit=None, marker=None,
@@ -1460,6 +1575,14 @@ class ServersControllerUpdateTest(ControllerTest):
         self.assertRaises(webob.exc.HTTPNotFound, self.controller.update,
                           req, FAKE_UUID, body)
 
+    def test_update_server_policy_fail(self):
+        rule = {'compute:update': common_policy.parse_rule('role:admin')}
+        common_policy.set_rules(common_policy.Rules(rule))
+        body = {'server': {'name': 'server_test'}}
+        req = self._get_request(body, {'name': 'server_test'})
+        self.assertRaises(exception.PolicyNotAuthorized,
+                self.controller.update, req, FAKE_UUID, body)
+
 
 class ServerStatusTest(test.TestCase):
 
@@ -1780,7 +1903,7 @@ class ServersControllerCreateTest(test.TestCase):
 
         with testtools.ExpectedException(
                 webob.exc.HTTPBadRequest,
-                "Instance type's disk is too small for requested image."):
+                "Flavor's disk is too small for requested image."):
             self.controller.create(self.req, self.body)
 
     def test_create_instance_image_ref_is_bookmark(self):
@@ -1813,7 +1936,7 @@ class ServersControllerCreateTest(test.TestCase):
         self.body['server'].update(params)
         self.req.body = jsonutils.dumps(self.body)
         self.req.headers["content-type"] = "application/json"
-        server = self.controller.create(self.req, self.body).obj['server']
+        self.controller.create(self.req, self.body).obj['server']
 
     # TODO(cyeoh): bp-v3-api-unittests
     # This needs to be ported to the os-keypairs extension tests
@@ -2127,7 +2250,6 @@ class ServersControllerCreateTest(test.TestCase):
 
     def test_create_location(self):
         selfhref = 'http://localhost/v2/fake/servers/%s' % FAKE_UUID
-        bookhref = 'http://localhost/fake/servers/%s' % FAKE_UUID
         self.req.body = jsonutils.dumps(self.body)
         robj = self.controller.create(self.req, self.body)
 
@@ -2139,7 +2261,7 @@ class ServersControllerCreateTest(test.TestCase):
         self.body['server']['flavor_ref'] = 3
         self.req.body = jsonutils.dumps(self.body)
         try:
-            server = self.controller.create(self.req, self.body).obj['server']
+            self.controller.create(self.req, self.body).obj['server']
             self.fail('expected quota to be exceeded')
         except webob.exc.HTTPRequestEntityTooLarge as e:
             self.assertEqual(e.explanation, expected_msg)
@@ -2833,6 +2955,24 @@ class ServersViewBuilderTest(test.TestCase):
         output = self.view_builder.show(self.request, self.instance)
         self.assertThat(output, matchers.DictMatches(expected_server))
 
+    def test_build_server_detail_with_fault_that_has_been_deleted(self):
+        self.instance['deleted'] = 1
+        self.instance['vm_state'] = vm_states.ERROR
+        fault = fake_instance.fake_fault_obj(self.uuid, code=500,
+                                             message="No valid host was found")
+        self.instance['fault'] = fault
+
+        expected_fault = {"code": 500,
+                          "created": "2010-10-10T12:00:00Z",
+                          "message": "No valid host was found"}
+
+        self.request.context = context.RequestContext('fake', 'fake')
+        output = self.view_builder.show(self.request, self.instance)
+        # Regardless of vm_state deleted servers sholud be DELETED
+        self.assertEqual("DELETED", output['server']['status'])
+        self.assertThat(output['server']['fault'],
+                        matchers.DictMatches(expected_fault))
+
     def test_build_server_detail_with_fault_no_details_not_admin(self):
         self.instance['vm_state'] = vm_states.ERROR
         self.instance['fault'] = fake_instance.fake_fault_obj(
@@ -2887,11 +3027,6 @@ class ServersViewBuilderTest(test.TestCase):
         self.instance['vm_state'] = vm_states.ACTIVE
         self.instance['progress'] = 100
         self.instance['fault'] = fake_instance.fake_fault_obj(self.uuid)
-
-        image_bookmark = "http://localhost:9292/images/5"
-        flavor_bookmark = "http://localhost/flavors/1"
-        self_link = "http://localhost/v3/servers/%s" % self.uuid
-        bookmark_link = "http://localhost/servers/%s" % self.uuid
 
         output = self.view_builder.show(self.request, self.instance)
         self.assertNotIn('fault', output['server'])
