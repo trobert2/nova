@@ -22,6 +22,7 @@ Management class for Storage-related functions (attach, detach, etc).
 import time
 import hashlib
 import os
+import ctypes
 
 from oslo.config import cfg
 
@@ -44,7 +45,7 @@ hyper_volumeops_opts = [
                default=5,
                help='Interval between volume attachment attempts, in seconds'),
     cfg.StrOpt('smbfs_mount_point_base',
-               default='$instances_path\_mnt',
+               default='C:\OpenStack\Instances\_mnt',
                help='Dir where smbfs links are created to SMB shares'),
 ]
 
@@ -59,7 +60,7 @@ class VolumeOps(object):
     Management class for Volume-related tasks
     """
 
-    def __init__(self, *args, **kw):
+    def __init__(self):
         self._hostutils = utilsfactory.get_hostutils()
         self._vmutils = utilsfactory.get_vmutils()
         self._volutils = utilsfactory.get_volumeutils()
@@ -231,11 +232,12 @@ class VolumeOps(object):
         return self._volutils.get_target_from_disk_path(physical_drive_path)
 
 
-class HyperVSMBFSVolumeDriver(VolumeOps):
+class HyperVSMBFSVolumeOps(VolumeOps):
 
-    def __init__(self, *args, **kw):
-        super(HyperVSMBFSVolumeDriver, self).__init__(*args, **kw)
+    def __init__(self):
+        super(HyperVSMBFSVolumeOps, self).__init__()
         self.mount_base = CONF.hyperv.smbfs_mount_point_base
+        self.pathutils = utilsfactory.get_pathutils()
 
     @staticmethod
     def get_hash_str(base_str):
@@ -257,7 +259,6 @@ class HyperVSMBFSVolumeDriver(VolumeOps):
                 smb_opts.append('/user:%s' % username)
                 smb_opts.append(passwd)
         smb_opts.append('/persistent:yes')
-
         stdout_value, stderr_value = utils.execute('net', 'use',
                                                    export_path,
                                                    *smb_opts)
@@ -276,15 +277,13 @@ class HyperVSMBFSVolumeDriver(VolumeOps):
 
         link_path = os.path.join(self.mount_base, export_hash)
 
-        # You cannot test if a file is a link in python 2.7
-        if os.path.exists(link_path) is False:
-            stdout_value, stderr_value = utils.execute('cmd.exe', '/C',
-                                                       'mklink', link_path,
-                                                       norm_path)
-            if stdout_value.find('symbolic link created for') == -1:
-                raise vmutils.HyperVException(_('An error has occurred when '
-                                                'creating symbolic link: %s')
-                                              % stdout_value)
+        if os.path.exists(link_path) is True:
+            if self.pathutils.is_symlink(link_path) is False:
+                raise vmutils.HyperVException(_("Link path already exists "
+                                                "and its not a symlink"))
+        else:
+            self.pathutils.create_sym_link(
+                link_path, norm_path, target_is_dir=True)
 
     def parse_options(self, option_str):
         opts_dict = {}
@@ -306,6 +305,7 @@ class HyperVSMBFSVolumeDriver(VolumeOps):
         opts = self.parse_options(opts_str)
 
         export = connection_info['data']['export']
+        disk_name = connection_info['data']['name']
 
         self._ensure_mounted(export, opts[1])
         disk_path = self.get_local_disk_path(connection_info)

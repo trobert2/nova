@@ -56,19 +56,16 @@ class HyperVDriver(driver.ComputeDriver):
         self._livemigrationops = livemigrationops.LiveMigrationOps()
         self._migrationops = migrationops.MigrationOps()
         self.volume_drivers = driver.driver_dict_from_config(
-            CONF.hyperv_volume_drivers, self)
+            CONF.hyperv_volume_drivers)
 
     def init_host(self, host):
         pass
 
-    def volume_driver_method(self, method_name, connection_info,
-                             *args, **kwargs):
+    def get_volume_driver(self, connection_info):
         driver_type = connection_info.get('driver_volume_type')
         if driver_type not in self.volume_drivers:
             raise exception.VolumeDriverNotFound(driver_type=driver_type)
-        driver = self.volume_drivers[driver_type]
-        method = getattr(driver, method_name)
-        return method(connection_info, *args, **kwargs)
+        return self.volume_drivers[driver_type]
 
     def list_instances(self):
         return self._vmops.list_instances()
@@ -92,15 +89,13 @@ class HyperVDriver(driver.ComputeDriver):
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
-        return self.volume_driver_method('attach_volume',
-                                         connection_info,
-                                         instance['name'])
+        volume_driver = self.get_volume_driver(connection_info)
+        return volume_driver.attach_volume(connection_info, instance['name'])
 
     def detach_volume(self, connection_info, instance, mountpoint,
                       encryption=None):
-        return self.volume_driver_method('detach_volume',
-                                         connection_info,
-                                         instance['name'])
+        volume_driver = self.get_volume_driver(connection_info)
+        return volume_driver.detach_volume(connection_info, instance['name'])
 
     def get_volume_connector(self, instance):
         return self._volumeops.get_volume_connector(instance)

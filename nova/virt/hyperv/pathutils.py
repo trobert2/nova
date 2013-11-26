@@ -17,6 +17,7 @@
 
 import os
 import shutil
+import sys
 
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
@@ -41,6 +42,8 @@ CONF.import_opt('instances_path', 'nova.compute.manager')
 
 
 class PathUtils(object):
+    _FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+
     def open(self, path, mode):
         """Wrapper on __builtin__.open used to simplify unit testing."""
         import __builtin__
@@ -57,6 +60,37 @@ class PathUtils(object):
 
     def rename(self, src, dest):
         os.rename(src, dest)
+
+    def is_symlink(self, path):
+        """
+        Test if a file is a symlink on python 2.x
+        """
+        if sys.version_info >= (3, 2):
+            return os.path.islink(path)
+
+        file_attr = ctypes.windll.kernel32.GetFileAttributesW(unicode(path))
+        if os.path.isdir(path) and \
+           (file_attr & self._FILE_ATTRIBUTE_REPARSE_POINT):
+            return True
+        else:
+            return False
+
+    def create_sym_link(self, link, target, target_is_dir=False):
+        """
+        If target_is_dir is True, a junction will be created.
+        NOTE: Juctions only work on same filesystem.
+        """
+        SymLink = ctypes.windll.kernel32.CreateSymbolicLinkW
+        SymLink.argtypes = (
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_ulong,
+        )
+        SymLink.restype = ctypes.c_ubyte
+        retcode = SymLink(link, target, target_is_dir)
+        if retcode == 0:
+            raise WindowsError("Could not create symbolic link")
+        return True
 
     def copyfile(self, src, dest):
         self.copy(src, dest)
