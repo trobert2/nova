@@ -321,7 +321,8 @@ class HyperVSMBFSVolumeOps(VolumeOps):
             self._vmutils.attach_ide_drive(instance_name,
                                            disk_path,
                                            ctrller_path,
-                                           slot)
+                                           slot,
+                                           is_scsi=True)
         except Exception as exn:
             LOG.exception(_('Attach volume failed: %s'), exn)
             raise vmutils.HyperVException(_('Unable to attach volume '

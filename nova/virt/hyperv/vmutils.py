@@ -537,11 +537,10 @@ class VMUtils(object):
     def detach_vhd_disk(self, vm_name, disk_path):
         vm = self._lookup_vm_check(vm_name)
         vhd = self._get_mounted_vhd_resource_from_path(disk_path)
-        ctrl = vhd.Parent
-        # ctrl = self._conn.query("SELECT * FROM "
-        #                         "Msvm_ResourceAllocationSettingData"
-        #                         " WHERE __PATH = '%s'" %
-        #                         vhd.Parent)[0]
+        ctrl = self._conn.query("SELECT * FROM "
+                                "Msvm_ResourceAllocationSettingData"
+                                " WHERE __PATH = '%s'" %
+                                vhd.Parent)[0]
         if vhd:
             self._remove_virt_resource(vhd, vm.path_())
             self._remove_virt_resource(ctrl, vm.path_())

@@ -34,7 +34,7 @@ hyperv_opts = [
     cfg.ListOpt('hyperv_volume_drivers',
                 default=[
                     'iscsi=nova.virt.hyperv.volumeops.VolumeOps',
-                    'smbfs=nova.virt.hyperv.volumeops.HyperVSMBFSVolumeDriver',
+                    'smbfs=nova.virt.hyperv.volumeops.HyperVSMBFSVolumeOps',
                 ],
                 help='Hyper-V handlers for remote volumes.'),
 ]
