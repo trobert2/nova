@@ -1105,6 +1105,8 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                              fake_device_number)
 
     def _mock_attach_volume_smbfs(self, connection_info, instance_name):
+        fake_controller_path = 'fake_controller_path'
+
         self._mock_ensure_mounted(connection_info, fail=False)
         export_hash = self._mock_get_hash_str()
         fake_path = CONF.hyperv.smbfs_mount_point_base + '/' + export_hash
@@ -1113,12 +1115,17 @@ class HyperVAPITestCase(test.NoDBTestCase):
         m = os.path.isfile(fake_filepath)
         m.AndReturn(True)
 
-        vmutils.VMUtils.get_vm_scsi_controller(instance_name)
+        m = vmutils.VMUtils.get_vm_scsi_controller(instance_name)
+        m.AndReturn(fake_controller_path)
 
-        vmutils.VMUtils.get_attached_disks_count(None)
+        fake_free_slot = 1
+        m = vmutils.VMUtils.get_attached_disks_count(fake_controller_path)
+        m.AndReturn(fake_free_slot)
+
         vmutils.VMUtils.attach_ide_drive(instance_name,
                                          fake_filepath,
-                                         None, None,
+                                         fake_controller_path,
+                                         fake_free_slot,
                                          is_scsi=True)
 
 
