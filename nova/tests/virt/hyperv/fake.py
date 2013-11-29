@@ -41,6 +41,9 @@ class PathUtils(object):
     def copy(self, src, dest):
         pass
 
+    def create_sym_link(self, link, target):
+        return True
+
     def rmtree(self, path):
         pass
 

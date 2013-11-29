@@ -58,6 +58,14 @@ def get_fake_image_data(project_id, user_id):
             'instance_type': 'm1.tiny',
             }
 
+def get_fake_volume_info_data_smbfs():
+    return {'driver_volume_type': 'smbfs',
+            'serial': 'ad70aaf2-5d19-4444-b29c-46f7ae04ac61',
+            'data': {'access_mode': 'rw',
+                      'qos_spec': None,
+                      'export': '//10.7.12.40/volumes',
+                      'name': 'volume-ad70aaf2-5d19-4444-b29c.vhd',
+                      'options': '-o user=guest -o password='}}
 
 def get_fake_volume_info_data(target_portal, volume_id):
     return {
