@@ -251,21 +251,16 @@ class HyperVSMBFSVolumeOps(VolumeOps):
         return os.path.join(self.mount_base, export_hash, disk_name)
 
     def _mount_smbfs(self, export_path, options=None):
-        smb_opts = []
+        smb_opts = {}
         if options:
             username = options.get('user')
             passwd = options.get('password')
             if username != 'guest':
-                smb_opts.append('/user:%s' % username)
-                smb_opts.append(passwd)
-        smb_opts.append('/persistent:yes')
-        stdout_value, stderr_value = utils.execute('net', 'use',
-                                                   export_path,
-                                                   *smb_opts)
-        if stdout_value.find('The command completed successfully') == -1:
-            raise vmutils.HyperVException(_('An error has occurred when '
-                                            'mounting smbfs share: %s')
-                                          % stdout_value)
+                smb_opts['UserName'] = username
+                smb_opts['Password'] = password
+        smb_opts['Persistent'] = True
+        smb_opts['SaveCredentials'] = True
+        self.pathutils.mount_smb(export_path, "*", smb_opts)
 
     def _ensure_mounted(self, export_path, options=None):
         if os.path.isdir(self.mount_base) is False:

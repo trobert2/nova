@@ -15,11 +15,15 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import ctypes
 import os
 import shutil
 import sys
-import ctypes
 
+if sys.platform == 'win32':
+    import wmi
+
+from nova.virt.hyperv import vmutils
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova import utils
@@ -44,6 +48,10 @@ CONF.import_opt('instances_path', 'nova.compute.manager')
 
 class PathUtils(object):
     _FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+
+    def __init__(self):
+        self._vmutils = vmutils.VMUtils()
+        self.smb_conn = wmi.WMI(moniker="root\Microsoft\Windows\SMB")
 
     def open(self, path, mode):
         """Wrapper on __builtin__.open used to simplify unit testing."""
@@ -187,3 +195,28 @@ class PathUtils(object):
         dir_name = os.path.join('export', instance_name)
         return self._get_instances_sub_dir(dir_name, create_dir=True,
                                            remove_dir=True)
+
+    def mount_smb(self, remote_path, local_path=None, options={}):
+        """ Parameters:
+                string LocalPath
+                string RemotePath
+                string UserName
+                string Password
+                boolean Persistent
+                boolean SaveCredentials
+                boolean HomeFolder
+        """
+        mappings = self.smb_conn.query("SELECT * from "
+                                       "MSFT_SmbMapping "
+                                       "WHERE RemotePath='%s'" %
+                                       remote_path)
+        if len(mappings) == 0:
+            if local_path:
+                options['LocalPath'] = local_path
+            else:
+                options['LocalPath'] = '*'
+            options['RemotePath'] = remote_path
+
+            (job_path,
+             ret_val) = self.smb_conn.Msft_SmbMapping.Create(**options)
+            self._vmutils.check_ret_val(ret_val, job_path)
