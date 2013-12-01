@@ -59,6 +59,9 @@ class PathUtils(object):
         return os.path.join(self.get_instances_dir(remote_server),
                             instance_name)
 
+    def is_symlink(self):
+        return True
+
     def lookup_root_vhd_path(self, instance_name):
         instance_path = self.get_instance_dir(instance_name)
         return os.path.join(instance_path, 'root.vhd')

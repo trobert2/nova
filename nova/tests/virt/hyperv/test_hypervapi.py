@@ -145,6 +145,7 @@ class HyperVAPITestCase(test.NoDBTestCase):
         self._mox.StubOutWithMock(fake.PathUtils, 'remove')
         self._mox.StubOutWithMock(fake.PathUtils, 'rename')
         self._mox.StubOutWithMock(fake.PathUtils, 'makedirs')
+        self._mox.StubOutWithMock(fake.PathUtils, 'is_symlink')
         self._mox.StubOutWithMock(fake.PathUtils,
                                   'get_instance_migr_revert_dir')
         self._mox.StubOutWithMock(fake.PathUtils, 'get_instance_dir')
@@ -888,7 +889,7 @@ class HyperVAPITestCase(test.NoDBTestCase):
             self._instance_ide_dvds.append(path)
 
     def _add_volume_disk(self, vm_name, controller_path, address,
-                         mounted_disk_path):
+                         mounted_disk_path, is_scsi=False):
         self._instance_volume_disks.append(mounted_disk_path)
 
     def _check_img_path(self, image_path):
@@ -1107,7 +1108,7 @@ class HyperVAPITestCase(test.NoDBTestCase):
     def _mock_attach_volume_smbfs(self, connection_info, instance_name):
         fake_controller_path = 'fake_controller_path'
 
-        self._mock_ensure_mounted(connection_info, fail=False)
+        self._mock_ensure_mounted(connection_info)
         export_hash = self._mock_get_hash_str()
         fake_path = CONF.hyperv.smbfs_mount_point_base + '/' + export_hash
         fake_filepath = fake_path + '/' + connection_info['data']['name']
@@ -1122,11 +1123,12 @@ class HyperVAPITestCase(test.NoDBTestCase):
         m = vmutils.VMUtils.get_attached_disks_count(fake_controller_path)
         m.AndReturn(fake_free_slot)
 
-        vmutils.VMUtils.attach_ide_drive(instance_name,
-                                         fake_filepath,
-                                         fake_controller_path,
-                                         fake_free_slot,
-                                         is_scsi=True)
+        m = vmutils.VMUtils.attach_ide_drive(instance_name,
+                                             fake_filepath,
+                                             fake_controller_path,
+                                             fake_free_slot,
+                                             is_scsi=True)
+        m.WithSideEffects(self._add_volume_disk)
 
 
     def _mock_attach_volume_iscsi(self, instance_name, target_iqn, target_lun,
@@ -1162,14 +1164,11 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                                         fake_mounted_disk)
         m.WithSideEffects(self._add_volume_disk)
 
-    def _mock_mount_smbfs(self, connection_info, fail=False):
+    def _mock_mount_smbfs(self, connection_info):
         export = connection_info['data']['export'].replace('/', '\\')
         m = utils.execute('net', 'use', export, '/persistent:yes')
-        if fail:
-            fake_value = 'The command did not completed successfully'
-            m.AndReturn((fake_value, 1))
-        else:
-            m.AndReturn(('The command completed successfully', 0))
+        fake_value = 'The command completed successfully'
+        m.AndReturn((fake_value, 1))
 
     def _mock_get_hash_str(self):
         hexdigit_mock = self._mox.CreateMockAnything()
@@ -1181,14 +1180,13 @@ class HyperVAPITestCase(test.NoDBTestCase):
         return export_hash
 
 
-    def _mock_ensure_mounted(self, connection_info, fail=False):
-        self._mock_mount_smbfs(connection_info, fail=fail)
-        if not fail:
-            export = connection_info['data']['export'].replace('/', '\\')
-            export_hash = self._mock_get_hash_str()
-            pathutils.PathUtils.create_sym_link(
-                CONF.hyperv.smbfs_mount_point_base + '/' + export_hash,
-                export, target_is_dir=True)
+    def _mock_ensure_mounted(self, connection_info):
+        self._mock_mount_smbfs(connection_info)
+        export = connection_info['data']['export'].replace('/', '\\')
+        export_hash = self._mock_get_hash_str()
+        pathutils.PathUtils.create_sym_link(
+            CONF.hyperv.smbfs_mount_point_base + '/' + export_hash,
+            export, target_is_dir=True)
 
     def _test_util_class_version(self, v1_class, v2_class,
                                  get_instance_action, is_hyperv_2012,
@@ -1352,19 +1350,21 @@ class HyperVAPITestCase(test.NoDBTestCase):
 
     def _test_attach_volume_connection_error(self, driver_volume_type):
         instance_data = self._get_instance_data()
-        if  driver_volume_type == 'iscsi':
-            connection_info = db_fakes.get_fake_volume_info_data(
-            self._volume_target_portal, self._volume_id)
-        else:
-            connection_info = db_fakes.get_fake_volume_info_data_smbfs()
-            self._mock_ensure_mounted(connection_info, fail=True)
         mount_point = '/dev/sdc'
-
         def fake_login_storage_target(connection_info):
             raise Exception('Fake connection exception')
 
-        self.stubs.Set(self._conn.volume_drivers[driver_volume_type],
-                       '_login_storage_target', fake_login_storage_target)
+        if  driver_volume_type == 'iscsi':
+            connection_info = db_fakes.get_fake_volume_info_data(
+            self._volume_target_portal, self._volume_id)
+            self.stubs.Set(self._conn.volume_drivers[driver_volume_type],
+                           '_login_storage_target', fake_login_storage_target)
+        else:
+            connection_info = db_fakes.get_fake_volume_info_data_smbfs()
+            self._mock_ensure_mounted(connection_info)
+            self.stubs.Set(self._conn.volume_drivers[driver_volume_type],
+                           'get_local_disk_path', fake_login_storage_target)
+
         self.assertRaises(vmutils.HyperVException, self._conn.attach_volume,
                           None, connection_info, instance_data, mount_point)
 
