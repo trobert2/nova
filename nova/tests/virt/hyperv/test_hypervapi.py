@@ -1348,33 +1348,22 @@ class HyperVAPITestCase(test.NoDBTestCase):
                           None, connection_info, instance_data, mount_point)
         self._mox.VerifyAll()
 
-    def _test_attach_volume_connection_error(self, driver_volume_type):
+    def test_attach_volume_iscsi_connection_error(self):
         instance_data = self._get_instance_data()
+
+        connection_info = db_fakes.get_fake_volume_info_data(
+            self._volume_target_portal, self._volume_id)
         mount_point = '/dev/sdc'
+
         def fake_login_storage_target(connection_info):
             raise Exception('Fake connection exception')
 
-        if  driver_volume_type == 'iscsi':
-            connection_info = db_fakes.get_fake_volume_info_data(
-            self._volume_target_portal, self._volume_id)
-            self.stubs.Set(self._conn.volume_drivers[driver_volume_type],
-                           '_login_storage_target', fake_login_storage_target)
-        else:
-            connection_info = db_fakes.get_fake_volume_info_data_smbfs()
-            self._mock_ensure_mounted(connection_info)
-            self.stubs.Set(self._conn.volume_drivers[driver_volume_type],
-                           'get_local_disk_path', fake_login_storage_target)
-
+        self.stubs.Set(self._conn.volume_drivers['iscsi'],
+                       '_login_storage_target', fake_login_storage_target)
         self.assertRaises(vmutils.HyperVException, self._conn.attach_volume,
                           None, connection_info, instance_data, mount_point)
 
-    def test_attach_volume_connection_error_iscsi(self):
-        self._test_attach_volume_connection_error(driver_volume_type='iscsi')
-
-    def test_attach_volume_connection_error_smbfs(self):
-        self._test_attach_volume_connection_error(driver_volume_type='smbfs')
-
-    def _mock_detach_volume(self, target_iqn, target_lun):
+    def _mock_detach_volume_iscsi(self, target_iqn, target_lun):
         mount_point = '/dev/sdc'
 
         fake_mounted_disk = "fake_mounted_disk"
@@ -1391,7 +1380,7 @@ class HyperVAPITestCase(test.NoDBTestCase):
 
         volumeutils.VolumeUtils.logout_storage_target(mox.IsA(str))
 
-    def test_detach_volume(self):
+    def test_detach_volume_iscsi(self):
         instance_data = self._get_instance_data()
         instance_name = instance_data['name']
 

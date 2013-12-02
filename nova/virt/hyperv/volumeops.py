@@ -253,7 +253,7 @@ class HyperVSMBFSVolumeOps(VolumeOps):
         smb_opts = {}
         if options:
             username = options.get('user')
-            passwd = options.get('password')
+            password = options.get('password')
             if username != 'guest':
                 smb_opts['UserName'] = username
                 smb_opts['Password'] = password
@@ -267,7 +267,7 @@ class HyperVSMBFSVolumeOps(VolumeOps):
         export_hash = self.get_hash_str(export_path)
 
         norm_path = export_path.replace('/', '\\')
-        mnt = self._mount_smbfs(norm_path, options)
+        self._mount_smbfs(norm_path, options)
 
         link_path = os.path.join(self.mount_base, export_hash)
 
@@ -299,7 +299,6 @@ class HyperVSMBFSVolumeOps(VolumeOps):
         opts = self.parse_options(opts_str)
 
         export = connection_info['data']['export']
-        disk_name = connection_info['data']['name']
 
         self._ensure_mounted(export, opts[1])
         disk_path = self.get_local_disk_path(connection_info)
