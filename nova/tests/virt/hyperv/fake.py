@@ -89,3 +89,6 @@ class PathUtils(object):
 
     def vhd_exists(self, path):
         return False
+
+    def mount_smb(self):
+        pass
