@@ -484,3 +484,16 @@ class VMUtilsTestCase(test.NoDBTestCase):
     def _assert_remove_resources(self, mock_svc):
         getattr(mock_svc, self._REMOVE_RESOURCE).assert_called_with(
             [self._FAKE_RES_PATH], self._FAKE_VM_PATH)
+
+    def test_list_instance_notes(self):
+        vs = mock.MagicMock()
+        attrs = {'ElementName': 'fake_name',
+                 'Notes': '4f54fb69-d3a2-45b7-bb9b-b6e6b3d893b3'}
+        vs.configure_mock(**attrs)
+        self._vmutils._conn.Msvm_VirtualSystemSettingData.return_value = [vs]
+        response = self._vmutils.list_instance_notes()
+
+        self.assertEqual([(attrs['ElementName'], [attrs['Notes']])], response)
+        self._vmutils._conn.Msvm_VirtualSystemSettingData.assert_called_with(
+            ['ElementName', 'Notes'],
+            SettingType=self._vmutils._VIRTUAL_SYSTEM_CURRENT_SETTINGS)

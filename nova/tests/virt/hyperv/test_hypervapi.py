@@ -156,6 +156,7 @@ class HyperVAPIBaseTestCase(test.NoDBTestCase):
         self._mox.StubOutWithMock(vmutils.VMUtils, 'create_nic')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'set_vm_state')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'list_instances')
+        self._mox.StubOutWithMock(vmutils.VMUtils, 'list_instance_notes')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'get_vm_summary_info')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'take_vm_snapshot')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'remove_vm_snapshot')
@@ -910,7 +911,8 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase,
                                      ephemeral_storage=False):
         vmutils.VMUtils.create_vm(mox.Func(self._check_vm_name), mox.IsA(int),
                                   mox.IsA(int), mox.IsA(bool),
-                                  CONF.hyperv.dynamic_memory_ratio)
+                                  CONF.hyperv.dynamic_memory_ratio,
+                                  mox.IsA(list))
 
         if not boot_from_volume:
             m = vmutils.VMUtils.attach_ide_drive(mox.Func(self._check_vm_name),
@@ -1819,3 +1821,12 @@ class VolumeOpsTestCase(HyperVAPIBaseTestCase):
             self.assertRaises(vmutils.HyperVException,
                               self.volumeops._get_free_controller_slot,
                               fake_scsi_controller_path)
+
+    def test_list_instance_uuids(self):
+        m = vmutils.VMUtils.list_instance_notes()
+        fake_uuid = '4f54fb69-d3a2-45b7-bb9b-b6e6b3d893b3'
+        m.AndReturn([('fake_name', [fake_uuid])])
+        self._mox.ReplayAll()
+        response = self._conn.list_instance_uuids()
+        self._mox.VerifyAll()
+        self.assertEqual([fake_uuid], response)
