@@ -19,6 +19,7 @@ Management class for basic VM operations.
 """
 import functools
 import os
+import uuid
 
 from oslo.config import cfg
 
@@ -113,6 +114,20 @@ class VMOps(object):
             raise TypeError(_("VIF driver not found for "
                               "network_api_class: %s") %
                             CONF.network_api_class)
+
+    def _is_valid_uuid(self, uuid_str):
+        try:
+            uuid.UUID(uuid_str)
+            return True
+        except ValueError:
+            return False
+
+    def list_instance_uuids(self):
+        instance_uuids = []
+        for (instance_name, notes) in self._vmutils.list_instance_notes():
+            if notes and self._is_valid_uuid(notes[0]):
+                instance_uuids.append(str(notes[0]))
+        return instance_uuids
 
     def list_instances(self):
         return self._vmutils.list_instances()
@@ -240,7 +255,8 @@ class VMOps(object):
                                 instance['memory_mb'],
                                 instance['vcpus'],
                                 CONF.hyperv.limit_cpu_features,
-                                CONF.hyperv.dynamic_memory_ratio)
+                                CONF.hyperv.dynamic_memory_ratio,
+                                [instance['uuid']])
 
         ctrl_disk_addr = 0
         if root_vhd_path:
