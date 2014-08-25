@@ -18,6 +18,7 @@ import mock
 from nova import exception
 from nova import test
 from nova.virt.hyperv import constants
+from nova.virt.hyperv import hostutils
 from nova.virt.hyperv import vmutils
 
 
@@ -67,7 +68,8 @@ class VMUtilsTestCase(test.NoDBTestCase):
 
     _VIRTUAL_SYSTEM_TYPE_REALIZED = 3
 
-    def setUp(self):
+    @mock.patch.object(hostutils.HostUtils, "check_min_windows_version")
+    def setUp(self, mock_check_min_windows_version):
         self._vmutils = vmutils.VMUtils()
         self._vmutils._conn = mock.MagicMock()
 
@@ -505,3 +507,36 @@ class VMUtilsTestCase(test.NoDBTestCase):
     def _assert_remove_resources(self, mock_svc):
         getattr(mock_svc, self._REMOVE_RESOURCE).assert_called_with(
             [self._FAKE_RES_PATH], self._FAKE_VM_PATH)
+
+    @mock.patch.object(vmutils.VMUtils, "_clone_wmi_obj")
+    def _test_check_clone_wmi_obj(self, mock_clone_wmi_obj, clone_objects):
+        mock_obj = mock.MagicMock()
+        self._vmutils._clone_wmi_objs = clone_objects
+
+        response = self._vmutils._check_clone_wmi_obj(class_name="fakeClass",
+                                                      obj=mock_obj)
+        if not clone_objects:
+            self.assertEqual(response, mock_obj)
+        else:
+            mock_clone_wmi_obj.assert_called_once_with("fakeClass", mock_obj)
+            self.assertEqual(response, mock_clone_wmi_obj.return_value)
+
+    def test_check_clone_wmi_obj_true(self):
+        self._test_check_clone_wmi_obj(clone_objects=True)
+
+    def test_check_clone_wmi_obj_false(self):
+        self._test_check_clone_wmi_obj(clone_objects=False)
+
+    def test_clone_wmi_obj(self):
+        mock_obj = mock.MagicMock()
+        mock_value = mock.MagicMock()
+        mock_value.Value = 'fake value'
+        mock_obj._properties = ['fake property']
+        mock_obj.Properties_.Item.return_value = mock_value
+
+        response = self._vmutils._clone_wmi_obj(class_name="fakeClass",
+                                                obj=mock_obj)
+
+        compare = self._vmutils._conn.fakeClass.new()
+        self.assertEqual(compare.Properties_.Item().Value, 'fake value')
+        self.assertEqual(response, compare)
